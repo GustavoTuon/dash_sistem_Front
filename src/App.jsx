@@ -32,8 +32,25 @@ const numberFormatter = new Intl.NumberFormat("pt-BR", {
 });
 
 const dashboardTabs = [
-  { id: "overview", label: "Dashboard Geral" },
-  { id: "fuel", label: "Dashboard Combustível" },
+  { id: "overview", label: "Manutenção" },
+  { id: "fuel", label: "Abastecimento" },
+];
+
+const overviewSectionLinks = [
+  { id: "overview-resumo", label: "Resumo" },
+  { id: "overview-receita", label: "Receita x custo" },
+  { id: "overview-custos", label: "Custos" },
+  { id: "overview-categorias", label: "Categorias" },
+  { id: "overview-contas", label: "Contas" },
+];
+
+const fuelSectionLinks = [
+  { id: "fuel-resumo", label: "Resumo" },
+  { id: "fuel-km", label: "KM e media" },
+  { id: "fuel-gasto", label: "Gasto" },
+  { id: "fuel-motoristas", label: "Motoristas" },
+  { id: "fuel-postos", label: "Postos" },
+  { id: "fuel-recentes", label: "Recentes" },
 ];
 
 function formatCurrency(value) {
@@ -89,9 +106,9 @@ function StatCard({ title, value, helper, tone = "default" }) {
   );
 }
 
-function SectionCard({ title, subtitle, children, actions }) {
+function SectionCard({ id, title, subtitle, children, actions }) {
   return (
-    <section className="section-card">
+    <section id={id} className="section-card anchor-section">
       <header className="section-card__header">
         <div>
           <h2>{title}</h2>
@@ -199,11 +216,11 @@ function MonthFilter({ months, selectedMonths, onToggle, onClear }) {
     <div className="month-filter">
       <div className="month-filter__header">
         <div>
-          <span className="month-filter__eyebrow">Filtro por referência</span>
-          <h3>Selecione um ou mais meses</h3>
+          <span className="month-filter__eyebrow">Meses</span>
+          <h3>Referências</h3>
         </div>
         <button type="button" className="ghost-button" onClick={onClear}>
-          Limpar filtro
+          Limpar
         </button>
       </div>
 
@@ -331,71 +348,125 @@ export function App() {
     }
   }, [loading]);
 
-  const selectedPlateInfo =
-    plates.find((plate) => plate.placa === selectedPlate) ?? plates[0];
+  const sectionLinks = activeTab === "overview" ? overviewSectionLinks : fuelSectionLinks;
+
+  function scrollToSection(sectionId) {
+    document
+      .getElementById(sectionId)
+      ?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
 
   return (
     <div className="app-shell">
-      <aside className="sidebar">
-        <div className="sidebar__inner">
-          <div className="brand-block">
+      <header className="topbar">
+        <div className="topbar__inner">
+          <div className="brand-block topbar__brand">
             <div className="brand-lockup">
               <div className="brand-mark" aria-hidden="true">
                 <span className="brand-mark__rb brand-mark__rb--dark">R</span>
                 <span className="brand-mark__rb brand-mark__rb--light">B</span>
               </div>
               <div className="brand-copy">
-                <span className="brand-block__eyebrow">Transportes Rodoviários</span>
+                <span className="brand-block__eyebrow">Transportes</span>
                 <h1>Rodobach</h1>
               </div>
             </div>
-            <p>
-              Painel executivo para acompanhar custos, abastecimentos e resultado
-              por placa com uma leitura clara para o cliente.
-            </p>
-            <div className="brand-accent-line" />
           </div>
 
-          <div className="filter-card">
-            <label htmlFor="placa">Placa</label>
-            <div className="select-shell">
-              <select
-                id="placa"
-                value={selectedPlate}
-                onChange={(event) => setSelectedPlate(event.target.value)}
-              >
-                <option value="">Todas as placas</option>
-                {plates.map((plate) => (
-                  <option key={plate.placa} value={plate.placa}>
-                    {plate.placa}
-                  </option>
+          <nav className="topnav" aria-label="Menu principal">
+            <div className="topnav__item">
+              <button type="button" className="topnav__trigger">
+                Dashboard
+              </button>
+              <div className="topnav__panel topnav__panel--compact">
+                {dashboardTabs.map((tab) => (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    className={`menu-option ${activeTab === tab.id ? "is-active" : ""}`}
+                    onClick={() => setActiveTab(tab.id)}
+                  >
+                    <strong>{tab.label}</strong>
+                    <span>
+                      {tab.id === "fuel"
+                        ? "Combustível, motoristas e postos"
+                        : "Custos, receitas e resultado"}
+                    </span>
+                  </button>
                 ))}
-              </select>
+              </div>
             </div>
 
-            <small>
-              {selectedPlateInfo
-                ? `${selectedPlateInfo.descricao ?? "Veículo"} | ${
-                    selectedPlateInfo.empresa ?? "Empresa não informada"
-                  }`
-                : "Filtro geral para toda a base"}
-            </small>
-          </div>
-
-          <nav className="nav-tabs" aria-label="Dashboards">
-            {dashboardTabs.map((tab) => (
-              <button
-                key={tab.id}
-                type="button"
-                className={activeTab === tab.id ? "is-active" : ""}
-                onClick={() => setActiveTab(tab.id)}
-              >
-                {tab.label}
+            <div className="topnav__item">
+              <button type="button" className="topnav__trigger">
+                Placa
               </button>
-            ))}
+              <div className="topnav__panel topnav__panel--compact">
+                <button
+                  type="button"
+                  className={`menu-option ${!selectedPlate ? "is-active" : ""}`}
+                  onClick={() => setSelectedPlate("")}
+                >
+                  <strong>Todas as placas</strong>
+                  <span>Visualizar toda a base</span>
+                </button>
+                {plates.map((plate) => (
+                  <button
+                    key={plate.placa}
+                    type="button"
+                    className={`menu-option ${selectedPlate === plate.placa ? "is-active" : ""}`}
+                    onClick={() => setSelectedPlate(plate.placa)}
+                  >
+                    <strong>{plate.placa}</strong>
+                    <span>{plate.descricao ?? plate.empresa ?? "Veículo"}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="topnav__item">
+              <button type="button" className="topnav__trigger">
+                Referência
+              </button>
+              <div className="topnav__panel topnav__panel--wide">
+                <MonthFilter
+                  months={months}
+                  selectedMonths={selectedMonths}
+                  onToggle={(month) => toggleMonth(month, selectedMonths, setSelectedMonths)}
+                  onClear={() => setSelectedMonths([])}
+                />
+              </div>
+            </div>
+
+            <div className="topnav__item">
+              <button type="button" className="topnav__trigger">
+                Atalhos
+              </button>
+              <div className="topnav__panel topnav__panel--wide">
+                <div className="section-jump" aria-label="Ir para bloco">
+                  <span>Ir para bloco</span>
+                  <div className="section-jump__buttons">
+                    {sectionLinks.map((section) => (
+                      <button
+                        key={section.id}
+                        type="button"
+                        onClick={() => scrollToSection(section.id)}
+                      >
+                        {section.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
           </nav>
+
+          <div className="topbar__summary">
+            <span>{selectedPlate || "Todas as placas"}</span>
+            <strong>{selectedMonths.length || months.length} meses</strong>
+          </div>
         </div>
-      </aside>
+      </header>
 
       <main className="content">
         <section className="hero">
@@ -416,13 +487,6 @@ export function App() {
             <strong>{selectedMonths.length || months.length}</strong>
           </div>
         </section>
-
-        <MonthFilter
-          months={months}
-          selectedMonths={selectedMonths}
-          onToggle={(month) => toggleMonth(month, selectedMonths, setSelectedMonths)}
-          onClear={() => setSelectedMonths([])}
-        />
 
         {!error && diagnostics ? (
           <section className="diagnostics-strip diagnostics-strip--compact">
@@ -497,7 +561,7 @@ function OverviewDashboard({
 }) {
   return (
     <div className="dashboard-grid">
-      <div className="stats-grid">
+      <section id="overview-resumo" className="stats-grid anchor-section">
         <StatCard
           title="Receita Total"
           value={formatCurrency(data.summary.receitaTotal)}
@@ -521,9 +585,10 @@ function OverviewDashboard({
           value={formatCurrency(data.summary.ticketMedioReceita)}
           helper={`${formatNumber(data.summary.totalCompetencias)} competências filtradas`}
         />
-      </div>
+      </section>
 
       <SectionCard
+        id="overview-receita"
         title="Receita x custo x lucro"
         subtitle="Clique no mês para aplicar ou remover o filtro"
       >
@@ -582,6 +647,7 @@ function OverviewDashboard({
       </SectionCard>
 
       <SectionCard
+        id="overview-custos"
         title="Custos detalhados"
         subtitle="Principais componentes de custo separados para leitura executiva"
       >
@@ -589,6 +655,7 @@ function OverviewDashboard({
       </SectionCard>
 
       <SectionCard
+        id="overview-categorias"
         title="Custos por categoria"
         subtitle="Clique em uma categoria para filtrar todo o dashboard financeiro"
       >
@@ -628,6 +695,7 @@ function OverviewDashboard({
       </SectionCard>
 
       <SectionCard
+        id="overview-contas"
         title="Contas com maior impacto"
         subtitle="Ordene as colunas para analisar as maiores despesas"
       >
@@ -652,7 +720,7 @@ function OverviewDashboard({
 function FuelDashboard({ data, selectedMonths, onToggleMonth }) {
   return (
     <div className="dashboard-grid">
-      <div className="stats-grid">
+      <section id="fuel-resumo" className="stats-grid anchor-section">
         <StatCard
           title="Gasto com Combustível"
           value={formatCurrency(data.summary.gastoTotal)}
@@ -678,9 +746,10 @@ function FuelDashboard({ data, selectedMonths, onToggleMonth }) {
           )}`}
           tone="success"
         />
-      </div>
+      </section>
 
       <SectionCard
+        id="fuel-km"
         title="KM percorrido x média do veículo"
         subtitle="Colunas para rodagem e linha para média mensal de consumo"
       >
@@ -749,6 +818,7 @@ function FuelDashboard({ data, selectedMonths, onToggleMonth }) {
       </SectionCard>
 
       <SectionCard
+        id="fuel-gasto"
         title="Evolução do gasto com combustível"
         subtitle="Valores exibidos para facilitar a identificação mês a mês"
       >
@@ -788,6 +858,7 @@ function FuelDashboard({ data, selectedMonths, onToggleMonth }) {
       </SectionCard>
 
       <SectionCard
+        id="fuel-motoristas"
         title="Motoristas"
         subtitle="Ordene as colunas para comparar volume, gasto e consumo"
       >
@@ -821,6 +892,7 @@ function FuelDashboard({ data, selectedMonths, onToggleMonth }) {
       </SectionCard>
 
       <SectionCard
+        id="fuel-postos"
         title="Postos com maior gasto"
         subtitle="Ordene as colunas para identificar padrões de abastecimento"
       >
@@ -854,6 +926,7 @@ function FuelDashboard({ data, selectedMonths, onToggleMonth }) {
       </SectionCard>
 
       <SectionCard
+        id="fuel-recentes"
         title="Últimos abastecimentos"
         subtitle="Ordene as colunas para navegar pelos lançamentos recentes"
       >
