@@ -2701,12 +2701,6 @@ function TripControlAnalysisScreen() {
             <h2>Central de pendências</h2>
             <p>Lista operacional para acompanhar viagens sem recebimento ou com baixa parcial.</p>
           </div>
-          <div className="quick-status-actions">
-            <button type="button" className={!filters.paymentStatus ? "is-active" : ""} onClick={() => applyPaymentStatus("")}>Todos</button>
-            <button type="button" className={filters.paymentStatus === "pending" ? "is-active" : ""} onClick={() => applyPaymentStatus("pending")}>Em aberto</button>
-            <button type="button" className={filters.paymentStatus === "partial" ? "is-active" : ""} onClick={() => applyPaymentStatus("partial")}>Parcial</button>
-            <button type="button" className={filters.paymentStatus === "paid" ? "is-active" : ""} onClick={() => applyPaymentStatus("paid")}>Recebido</button>
-          </div>
         </header>
         <div className="receivables-summary">
           <button type="button" onClick={() => applyPaymentStatus("pending")}>
