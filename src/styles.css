@@ -2018,6 +2018,117 @@ td {
   background: rgba(247, 250, 252, 0.78);
 }
 
+.client-analysis-filters {
+  padding: 14px;
+  border: 0;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.97);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+}
+
+.fleet-filter-panel {
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+
+.fleet-filter-main {
+  display: grid;
+  grid-template-columns: minmax(320px, 1.25fr) 142px 142px minmax(300px, auto) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.fleet-search-control .quote-field__control {
+  position: relative;
+  min-height: 48px;
+  border-radius: 14px;
+  padding-left: 38px;
+  background: #ffffff;
+  box-shadow: inset 0 0 0 1px rgba(38, 58, 92, 0.1);
+}
+
+.fleet-search-control input {
+  min-height: 48px;
+  font-size: 0.98rem;
+  font-weight: 750;
+}
+
+.smart-search-field .quote-field__control::before {
+  content: "";
+  position: absolute;
+  left: 15px;
+  top: 50%;
+  width: 12px;
+  height: 12px;
+  padding-left: 0;
+  border: 2px solid #6b7a90;
+  border-radius: 999px;
+  transform: translateY(-58%);
+  pointer-events: none;
+}
+
+.smart-search-field .quote-field__control::after {
+  content: "";
+  position: absolute;
+  left: 27px;
+  top: 29px;
+  width: 8px;
+  height: 2px;
+  border-radius: 999px;
+  background: #6b7a90;
+  transform: rotate(45deg);
+  pointer-events: none;
+}
+
+.quick-status-actions--filter,
+.fleet-quick-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.quick-status-actions--filter button,
+.fleet-quick-row button {
+  min-height: 32px;
+  border: 1px solid rgba(38, 58, 92, 0.12);
+  border-radius: 999px;
+  padding: 0 11px;
+  background: #ffffff;
+  color: var(--brand-dark);
+  cursor: pointer;
+  font-size: 0.82rem;
+  font-weight: 850;
+}
+
+.fleet-quick-row button {
+  min-height: 28px;
+  padding: 0 10px;
+  background: transparent;
+}
+
+.filter-actions {
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+}
+
+.filter-actions > button[type="submit"] {
+  padding: 0 20px;
+  white-space: nowrap;
+}
+
+.filter-clear-button,
+.filter-more-button {
+  min-height: 46px;
+  white-space: nowrap;
+}
+
+.advanced-filter-row {
+  grid-column: auto;
+  border: 0;
+  background: #f7fafc;
+  box-shadow: inset 0 0 0 1px rgba(38, 58, 92, 0.07);
+}
+
 .billing-tabs--sub {
   position: sticky;
   top: 242px;
@@ -3205,6 +3316,7 @@ td {
   }
 
   .fleet-filter-panel,
+  .fleet-filter-main,
   .advanced-filter-row,
   .executive-dashboard-grid,
   .executive-dashboard-grid--bottom {
@@ -3261,6 +3373,15 @@ td {
 
   .topnav {
     width: 100%;
+  }
+
+  .filter-actions {
+    flex-wrap: wrap;
+    justify-content: stretch;
+  }
+
+  .filter-actions > button {
+    flex: 1 1 150px;
   }
 
   .brand-lockup {

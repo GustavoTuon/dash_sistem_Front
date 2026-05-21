@@ -2372,39 +2372,14 @@ function TripControlAnalysisScreen() {
 
       <section className="quote-panel client-analysis-filters fleet-filter-shell">
         <form className="fleet-filter-panel" onSubmit={applyFilters}>
-          <div className="filter-block filter-block--period">
-            <strong>Período</strong>
-            <div className="quick-periods">
-              <button type="button" onClick={() => applyQuickPeriod("today")}>Hoje</button>
-              <button type="button" onClick={() => applyQuickPeriod("7d")}>7 dias</button>
-              <button type="button" onClick={() => applyQuickPeriod("30d")}>30 dias</button>
-              <button type="button" onClick={() => applyQuickPeriod("month")}>Mês atual</button>
-            </div>
-            <div className="fleet-filter-dates">
-              <Field
-                label="Data inicial"
-                type="date"
-                value={filters.startDate}
-                onChange={(value) => updateFilter("startDate", value)}
-              />
-              <Field
-                label="Data final"
-                type="date"
-                value={filters.endDate}
-                onChange={(value) => updateFilter("endDate", value)}
-              />
-            </div>
-          </div>
-          <div className="filter-block filter-block--search">
-            <strong>Busca</strong>
-            <label className="quote-field smart-search-field">
-              <span>Buscar viagem, motorista, placa ou rota</span>
+          <div className="fleet-filter-main">
+            <label className="quote-field smart-search-field fleet-search-control">
               <div className="quote-field__control">
                 <input
                   type="search"
                   list="fleet-search-suggestions"
                   value={filters.search}
-                  placeholder="Digite placa, motorista, viagem ou cidade"
+                  placeholder="Buscar por motorista, placa, viagem ou rota..."
                   onChange={(event) => updateFilter("search", event.target.value)}
                 />
               </div>
@@ -2414,28 +2389,31 @@ function TripControlAnalysisScreen() {
                 ))}
               </datalist>
             </label>
-          </div>
-          <div className="filter-block filter-block--status">
-            <strong>Status</strong>
-            <div className="quick-status-actions quick-status-actions--filter">
-            <button type="button" className={!filters.paymentStatus ? "is-active" : ""} onClick={() => updateFilter("paymentStatus", "")}>Todos</button>
-            <button type="button" className={filters.paymentStatus === "pending" ? "is-active" : ""} onClick={() => updateFilter("paymentStatus", "pending")}>Pendente</button>
-            <button type="button" className={filters.paymentStatus === "partial" ? "is-active" : ""} onClick={() => updateFilter("paymentStatus", "partial")}>Parcial</button>
-            <button type="button" className={filters.paymentStatus === "paid" ? "is-active" : ""} onClick={() => updateFilter("paymentStatus", "paid")}>Recebido</button>
+            <Field
+              label="Início"
+              type="date"
+              value={filters.startDate}
+              onChange={(value) => updateFilter("startDate", value)}
+            />
+            <Field
+              label="Fim"
+              type="date"
+              value={filters.endDate}
+              onChange={(value) => updateFilter("endDate", value)}
+            />
+            <div className="quick-status-actions quick-status-actions--filter compact-status-pills" aria-label="Status financeiro">
+              <button type="button" className={!filters.paymentStatus ? "is-active" : ""} onClick={() => updateFilter("paymentStatus", "")}>Todos</button>
+              <button type="button" className={filters.paymentStatus === "pending" ? "is-active" : ""} onClick={() => updateFilter("paymentStatus", "pending")}>Pendente</button>
+              <button type="button" className={filters.paymentStatus === "partial" ? "is-active" : ""} onClick={() => updateFilter("paymentStatus", "partial")}>Parcial</button>
+              <button type="button" className={filters.paymentStatus === "paid" ? "is-active" : ""} onClick={() => updateFilter("paymentStatus", "paid")}>Recebido</button>
             </div>
-          </div>
-          <div className="filter-block filter-block--actions">
-            <strong>Ações</strong>
             <div className="filter-actions">
               <button type="submit" disabled={loading}>
-                {loading ? "Carregando..." : "Atualizar"}
-              </button>
-              <button type="button" className="secondary-button" onClick={() => setAdvancedFiltersOpen((current) => !current)}>
-                Mais filtros
+                {loading ? "Aplicando..." : "Aplicar filtros"}
               </button>
               <button
                 type="button"
-                className="secondary-button"
+                className="secondary-button filter-clear-button"
                 onClick={() => {
                   const nextFilters = { startDate: currentYearStart, endDate: today, search: "", driver: "", vehicle: "", paymentStatus: "", limit: "20" };
                   setFilters(nextFilters);
@@ -2444,7 +2422,16 @@ function TripControlAnalysisScreen() {
               >
                 Limpar
               </button>
+              <button type="button" className="secondary-button filter-more-button" onClick={() => setAdvancedFiltersOpen((current) => !current)}>
+                Mais filtros
+              </button>
             </div>
+          </div>
+          <div className="fleet-quick-row" aria-label="Filtros rápidos por período">
+            <button type="button" onClick={() => applyQuickPeriod("today")}>Hoje</button>
+            <button type="button" onClick={() => applyQuickPeriod("7d")}>7 dias</button>
+            <button type="button" onClick={() => applyQuickPeriod("30d")}>30 dias</button>
+            <button type="button" onClick={() => applyQuickPeriod("month")}>Mês atual</button>
           </div>
           {advancedFiltersOpen ? (
             <div className="advanced-filter-row">
