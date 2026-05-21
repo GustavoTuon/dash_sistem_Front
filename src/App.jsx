@@ -2082,11 +2082,16 @@ function getTripPaymentStatusLabel(value) {
   return "-";
 }
 
+const tripPaymentStatusOptions = [
+  { value: "pending", label: "Pendente", tone: "pending" },
+  { value: "partial", label: "Parcial", tone: "partial" },
+  { value: "paid", label: "Recebido", tone: "paid" },
+];
+
 function TripControlAnalysisScreen() {
   const today = new Date().toISOString().slice(0, 10);
   const currentYearStart = `${new Date().getFullYear()}-01-01`;
   const [fleetView, setFleetView] = useState("receivables");
-  const [advancedFiltersOpen, setAdvancedFiltersOpen] = useState(false);
   const [expandedTripRows, setExpandedTripRows] = useState({});
   const [filters, setFilters] = useState({
     startDate: currentYearStart,
@@ -2170,8 +2175,12 @@ function TripControlAnalysisScreen() {
   }
 
   useEffect(() => {
-    loadTrips();
-  }, []);
+    const timeoutId = window.setTimeout(() => {
+      loadTrips(filters);
+    }, 350);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [filters]);
 
   function updateFilter(field, value) {
     setFilters((current) => ({
@@ -2180,33 +2189,20 @@ function TripControlAnalysisScreen() {
     }));
   }
 
-  function applyFilters(event) {
-    event.preventDefault();
-    loadTrips(filters);
-  }
+  function togglePaymentStatus(status) {
+    setFilters((current) => {
+      const selected = String(current.paymentStatus ?? "")
+        .split(",")
+        .filter(Boolean);
+      const nextSelected = selected.includes(status)
+        ? selected.filter((item) => item !== status)
+        : [...selected, status];
 
-  function applyQuickPeriod(period) {
-    const end = new Date();
-    const start = new Date(end);
-
-    if (period === "today") {
-      start.setTime(end.getTime());
-    } else if (period === "7d") {
-      start.setDate(end.getDate() - 6);
-    } else if (period === "30d") {
-      start.setDate(end.getDate() - 29);
-    } else {
-      start.setDate(1);
-    }
-
-    const nextFilters = {
-      ...filters,
-      startDate: start.toISOString().slice(0, 10),
-      endDate: end.toISOString().slice(0, 10),
-    };
-
-    setFilters(nextFilters);
-    loadTrips(nextFilters);
+      return {
+        ...current,
+        paymentStatus: nextSelected.join(","),
+      };
+    });
   }
 
   async function openTripDetails(trip) {
@@ -2371,7 +2367,7 @@ function TripControlAnalysisScreen() {
       {error ? <div className="feedback-card feedback-card--error">{error}</div> : null}
 
       <section className="quote-panel client-analysis-filters fleet-filter-shell">
-        <form className="fleet-filter-panel" onSubmit={applyFilters}>
+        <div className="fleet-filter-panel">
           <div className="fleet-filter-main">
             <label className="quote-field smart-search-field fleet-search-control">
               <div className="quote-field__control">
@@ -2402,61 +2398,40 @@ function TripControlAnalysisScreen() {
               onChange={(value) => updateFilter("endDate", value)}
             />
             <div className="quick-status-actions quick-status-actions--filter compact-status-pills" aria-label="Status financeiro">
-              <button type="button" className={!filters.paymentStatus ? "is-active" : ""} onClick={() => updateFilter("paymentStatus", "")}>Todos</button>
-              <button type="button" className={filters.paymentStatus === "pending" ? "is-active" : ""} onClick={() => updateFilter("paymentStatus", "pending")}>Pendente</button>
-              <button type="button" className={filters.paymentStatus === "partial" ? "is-active" : ""} onClick={() => updateFilter("paymentStatus", "partial")}>Parcial</button>
-              <button type="button" className={filters.paymentStatus === "paid" ? "is-active" : ""} onClick={() => updateFilter("paymentStatus", "paid")}>Recebido</button>
+              {tripPaymentStatusOptions.map((status) => {
+                const selectedStatuses = String(filters.paymentStatus ?? "").split(",").filter(Boolean);
+                const isSelected = selectedStatuses.includes(status.value);
+
+                return (
+                  <button
+                    key={status.value}
+                    type="button"
+                    className={[
+                      isSelected ? "is-active" : "",
+                      `status-pill--${status.tone}`,
+                    ].filter(Boolean).join(" ")}
+                    onClick={() => togglePaymentStatus(status.value)}
+                    aria-pressed={isSelected}
+                  >
+                    {status.label}
+                  </button>
+                );
+              })}
             </div>
             <div className="filter-actions">
-              <button type="submit" disabled={loading}>
-                {loading ? "Aplicando..." : "Aplicar filtros"}
-              </button>
               <button
                 type="button"
                 className="secondary-button filter-clear-button"
                 onClick={() => {
                   const nextFilters = { startDate: currentYearStart, endDate: today, search: "", driver: "", vehicle: "", paymentStatus: "", limit: "20" };
                   setFilters(nextFilters);
-                  loadTrips(nextFilters);
                 }}
               >
                 Limpar
               </button>
-              <button type="button" className="secondary-button filter-more-button" onClick={() => setAdvancedFiltersOpen((current) => !current)}>
-                Mais filtros
-              </button>
             </div>
           </div>
-          <div className="fleet-quick-row" aria-label="Filtros rápidos por período">
-            <button type="button" onClick={() => applyQuickPeriod("today")}>Hoje</button>
-            <button type="button" onClick={() => applyQuickPeriod("7d")}>7 dias</button>
-            <button type="button" onClick={() => applyQuickPeriod("30d")}>30 dias</button>
-            <button type="button" onClick={() => applyQuickPeriod("month")}>Mês atual</button>
-          </div>
-          {advancedFiltersOpen ? (
-            <div className="advanced-filter-row">
-              <Field
-                label="Motorista"
-                type="search"
-                value={filters.driver}
-                placeholder="Nome ou código do motorista"
-                onChange={(value) => updateFilter("driver", value)}
-              />
-              <Field
-                label="Veículo"
-                type="search"
-                value={filters.vehicle}
-                placeholder="Placa, veículo ou código"
-                onChange={(value) => updateFilter("vehicle", value)}
-              />
-              <Field
-                label="Limite"
-                value={filters.limit}
-                onChange={(value) => updateFilter("limit", value)}
-              />
-            </div>
-          ) : null}
-        </form>
+        </div>
       </section>
 
       <section className="billing-tabs billing-tabs--sub">

@@ -2033,7 +2033,7 @@ td {
 
 .fleet-filter-main {
   display: grid;
-  grid-template-columns: minmax(320px, 1.25fr) 142px 142px minmax(300px, auto) auto;
+  grid-template-columns: minmax(320px, 1.25fr) 142px 142px minmax(270px, auto) auto;
   gap: 10px;
   align-items: end;
 }
@@ -2080,15 +2080,13 @@ td {
   pointer-events: none;
 }
 
-.quick-status-actions--filter,
-.fleet-quick-row {
+.quick-status-actions--filter {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
 }
 
-.quick-status-actions--filter button,
-.fleet-quick-row button {
+.quick-status-actions--filter button {
   min-height: 32px;
   border: 1px solid rgba(38, 58, 92, 0.12);
   border-radius: 999px;
@@ -2100,10 +2098,39 @@ td {
   font-weight: 850;
 }
 
-.fleet-quick-row button {
-  min-height: 28px;
-  padding: 0 10px;
-  background: transparent;
+.quick-status-actions--filter button::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.quick-status-actions--filter button.status-pill--pending {
+  color: #7a5a09;
+}
+
+.quick-status-actions--filter button.status-pill--partial {
+  color: #806018;
+}
+
+.quick-status-actions--filter button.status-pill--paid {
+  color: #175cd3;
+}
+
+.quick-status-actions--filter button.is-active.status-pill--pending {
+  border-color: rgba(180, 83, 9, 0.24);
+  background: #fff7d6;
+}
+
+.quick-status-actions--filter button.is-active.status-pill--partial {
+  border-color: rgba(202, 138, 4, 0.26);
+  background: #fef3c7;
+}
+
+.quick-status-actions--filter button.is-active.status-pill--paid {
+  border-color: rgba(37, 99, 235, 0.24);
+  background: #dbeafe;
 }
 
 .filter-actions {
@@ -2111,13 +2138,7 @@ td {
   justify-content: flex-end;
 }
 
-.filter-actions > button[type="submit"] {
-  padding: 0 20px;
-  white-space: nowrap;
-}
-
-.filter-clear-button,
-.filter-more-button {
+.filter-clear-button {
   min-height: 46px;
   white-space: nowrap;
 }
