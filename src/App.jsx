@@ -878,7 +878,7 @@ export function App() {
       <main className="content quote-content">
         <section className="quote-hero">
           <div>
-            <span className="hero__eyebrow">Cálculo operacional</span>
+          <span className="hero__eyebrow">Cálculo operacional atualizado</span>
             <h2>Tabela de frete no sistema</h2>
             <p>
               Calcule o valor de motorista, cliente, impostos e resultado usando a base ANTT
