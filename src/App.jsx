@@ -1,6 +1,7 @@
 ﻿import React, { useEffect, useMemo, useState } from "react";
 
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:3333/api";
+const APP_ROUTES = new Set(["/", "/app"]);
 
 const currencyFormatter = new Intl.NumberFormat("pt-BR", {
   style: "currency",
@@ -672,6 +673,12 @@ export function App() {
   const [copyMessage, setCopyMessage] = useState("");
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [anttOpen, setAnttOpen] = useState(false);
+
+  useEffect(() => {
+    if (!APP_ROUTES.has(window.location.pathname)) {
+      window.history.replaceState(null, "", "/app");
+    }
+  }, []);
 
   useEffect(() => {
     async function loadRates() {
