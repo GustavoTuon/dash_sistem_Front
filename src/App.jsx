@@ -1,6 +1,7 @@
 ﻿import React, { useEffect, useMemo, useState } from "react";
 
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:3333/api";
+const APP_ROUTES = new Set(["/", "/app"]);
 
 const currencyFormatter = new Intl.NumberFormat("pt-BR", {
   style: "currency",
@@ -92,6 +93,21 @@ const statusOptions = [
   { value: "cancelado", label: "Cancelado" },
 ];
 
+const registryStatusMeta = {
+  faltando_dados: { icon: "🟠", label: "Faltando dados" },
+  aguardando_cte: { icon: "🔵", label: "Aguardando CTE" },
+  finalizado: { icon: "🟢", label: "Finalizado" },
+  cancelado: { icon: "⚫", label: "Cancelado" },
+};
+
+const registryDetailTabs = [
+  ["resumo", "📋", "Resumo"],
+  ["rota", "📍", "Rota"],
+  ["cliente", "👤", "Cliente"],
+  ["documentos", "📄", "Documentos"],
+  ["acoes", "⚙", "Ações"],
+];
+
 const paymentConditionOptions = [
   { value: "", label: "Selecione" },
   { value: "avista", label: "A vista" },
@@ -107,6 +123,8 @@ const emptyRegistrySummary = {
   driverTotal: 0,
   profitTotal: 0,
 };
+
+const REGISTRY_PAGE_SIZE = 75;
 
 const automaticDocumentFields = {
   vehiclePlate: "plates",
@@ -147,6 +165,18 @@ function formatMoneyInput(value) {
   });
 }
 
+function formatMoneyAsTyping(value) {
+  const digits = String(value ?? "").replace(/\D/g, "");
+  if (!digits) {
+    return "";
+  }
+
+  return (Number(digits) / 100).toLocaleString("pt-BR", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
 function parseFlexibleDecimal(value) {
   if (typeof value === "number") {
     return Number.isFinite(value) ? value : 0;
@@ -167,6 +197,20 @@ function parseFlexibleDecimal(value) {
 
 function formatNumber(value) {
   return numberFormatter.format(Number(value ?? 0));
+}
+
+function formatCoefficient(value) {
+  return Number(value ?? 0).toLocaleString("pt-BR", {
+    minimumFractionDigits: 4,
+    maximumFractionDigits: 4,
+  });
+}
+
+function formatCoefficientDisplay(value) {
+  return Number(value ?? 0).toLocaleString("pt-BR", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
 }
 
 function formatDate(value) {
@@ -250,6 +294,24 @@ function Field({
   );
 }
 
+function MoneyField({ label, value, onChange }) {
+  return (
+    <label className="quote-field quote-field--money">
+      <span>{label}</span>
+      <div className="quote-field__control quote-field__control--money">
+        <small>R$</small>
+        <input
+          type="text"
+          inputMode="numeric"
+          value={value}
+          placeholder="0,00"
+          onChange={(event) => onChange(formatMoneyAsTyping(event.target.value))}
+        />
+      </div>
+    </label>
+  );
+}
+
 function SegmentedControl({ label, options, value, onChange }) {
   return (
     <div className="segmented-control">
@@ -326,6 +388,22 @@ function SelectField({ label, value, onChange, options }) {
   );
 }
 
+function ReadOnlyStatusField({ label, value }) {
+  const status = registryStatusMeta[value] ?? registryStatusMeta.faltando_dados;
+
+  return (
+    <div className="quote-field quote-field--readonly">
+      <span>{label}</span>
+      <div className="quote-field__control quote-field__control--readonly quote-field__control--status">
+        <span className={`status-pill status-pill--large status-pill--${value || "faltando_dados"}`}>
+          <span aria-hidden="true">{status.icon}</span>
+          {status.label}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 function getStatusLabel(value) {
   return statusOptions.find((option) => option.value === value)?.label ?? "Faltando dados";
 }
@@ -334,12 +412,98 @@ function getPaymentConditionLabel(value) {
   return paymentConditionOptions.find((option) => option.value === value)?.label ?? value ?? "-";
 }
 
+function normalizeSearchText(value) {
+  return String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLocaleLowerCase("pt-BR");
+}
+
 function splitCityUf(value) {
-  const [city = "", uf = ""] = String(value ?? "").split("/");
+  const text = String(value ?? "").trim();
+
+  if (text.includes("/")) {
+    const [city = "", uf = ""] = text.split("/");
+    return {
+      city: city.trim(),
+      uf: formatUf(uf),
+    };
+  }
+
+  const dashMatch = text.match(/^(.*?)\s+-\s+([a-zA-Z]{2})$/);
+  const city = dashMatch ? dashMatch[1] : text;
+  const uf = dashMatch ? dashMatch[2] : "";
+
   return {
     city: city.trim(),
     uf: formatUf(uf),
   };
+}
+
+function formatCityUfValue(city, uf) {
+  const cityText = String(city ?? "");
+  const cleanUf = formatUf(uf);
+
+  if (!cityText.trim()) {
+    return "";
+  }
+
+  return cleanUf ? `${cityText.trim()} - ${cleanUf}` : cityText;
+}
+
+function formatCityName(value) {
+  return String(value ?? "")
+    .trim()
+    .toLocaleLowerCase("pt-BR")
+    .replace(/(^|\s)(\p{L})/gu, (match) => match.toLocaleUpperCase("pt-BR"))
+    .replace(/\b(Da|De|Do|Das|Dos|E)\b/g, (match) => match.toLocaleLowerCase("pt-BR"));
+}
+
+function formatCityUfOption(value) {
+  const parsed = splitCityUf(value);
+  return formatCityUfValue(formatCityName(parsed.city), parsed.uf);
+}
+
+function getVehicleOptionLabel(option) {
+  if (typeof option === "string") {
+    return formatPlate(option);
+  }
+
+  const plate = formatPlate(option?.plate ?? "");
+  const driver = String(option?.driverName ?? "").trim();
+  const name = String(option?.name ?? "").trim();
+
+  return [plate, driver || name].filter(Boolean).join(" - ");
+}
+
+function getDriverOptionLabel(option) {
+  if (typeof option === "string") {
+    return option;
+  }
+
+  return String(option?.name ?? "").trim();
+}
+
+function getSellerOptionLabel(option) {
+  if (typeof option === "string") {
+    return option;
+  }
+
+  return String(option?.name ?? "").trim();
+}
+
+async function searchRegistryOptions(type, search) {
+  const query = String(search ?? "").trim();
+  if (query.length < 2) {
+    return [];
+  }
+
+  const response = await fetch(`${API_URL}/quote-registry/options/${type}?search=${encodeURIComponent(query)}`);
+  if (!response.ok) {
+    return [];
+  }
+
+  return response.json();
 }
 
 function getProfitTone(value) {
@@ -360,15 +524,61 @@ function getVehicleOwnershipLabel(value) {
   return "Sem informação";
 }
 
-function SuggestField({ label, value, onChange, options, placeholder }) {
+function SuggestField({
+  label,
+  value,
+  onChange,
+  options,
+  placeholder,
+  className = "",
+  getOptionLabel = (option) => option,
+  onSearch,
+}) {
   const [open, setOpen] = useState(false);
-  const normalizedValue = String(value ?? "").toLocaleLowerCase("pt-BR");
-  const filteredOptions = options
-    .filter((option) => option.toLocaleLowerCase("pt-BR").includes(normalizedValue))
-    .slice(0, 8);
+  const [remoteOptions, setRemoteOptions] = useState([]);
+  const normalizedValue = normalizeSearchText(value);
+  const sourceOptions = onSearch ? remoteOptions : options;
+  const filteredOptions = [];
+  const usedLabels = new Set();
+
+  useEffect(() => {
+    if (!onSearch || normalizedValue.length < 2) {
+      setRemoteOptions([]);
+      return undefined;
+    }
+
+    let active = true;
+    const timeoutId = window.setTimeout(async () => {
+      const results = await onSearch(value);
+      if (active) {
+        setRemoteOptions(Array.isArray(results) ? results : []);
+      }
+    }, 220);
+
+    return () => {
+      active = false;
+      window.clearTimeout(timeoutId);
+    };
+  }, [normalizedValue, onSearch, value]);
+
+  for (const option of sourceOptions) {
+    const optionLabel = getOptionLabel(option);
+    const labelKey = normalizeSearchText(optionLabel);
+
+    if (!labelKey.includes(normalizedValue) || usedLabels.has(labelKey)) {
+      continue;
+    }
+
+    filteredOptions.push(option);
+    usedLabels.add(labelKey);
+
+    if (filteredOptions.length === 8) {
+      break;
+    }
+  }
 
   return (
-    <label className="quote-field suggest-field">
+    <label className={`quote-field suggest-field ${className}`.trim()}>
       <span>{label}</span>
       <div className="quote-field__control">
         <input
@@ -387,7 +597,7 @@ function SuggestField({ label, value, onChange, options, placeholder }) {
         <div className="suggest-field__menu">
           {filteredOptions.map((option) => (
             <button
-              key={option}
+              key={typeof option === "string" ? option : getOptionLabel(option)}
               type="button"
               onMouseDown={(event) => event.preventDefault()}
               onClick={() => {
@@ -395,7 +605,7 @@ function SuggestField({ label, value, onChange, options, placeholder }) {
                 setOpen(false);
               }}
             >
-              {option}
+              {getOptionLabel(option)}
             </button>
           ))}
         </div>
@@ -465,6 +675,12 @@ export function App() {
   const [anttOpen, setAnttOpen] = useState(false);
 
   useEffect(() => {
+    if (!APP_ROUTES.has(window.location.pathname)) {
+      window.history.replaceState(null, "", "/app");
+    }
+  }, []);
+
+  useEffect(() => {
     async function loadRates() {
       try {
         const response = await fetch(`${API_URL}/freight/rates`);
@@ -486,33 +702,34 @@ export function App() {
     [rates, form.axles],
   );
 
-  const displayedQuote = quote
-    ? quote.simulation
-      ? {
-          customerTotal: quote.simulation.customerTotal,
-          driverValue: quote.simulation.driverValue,
-          netResult: quote.simulation.netResult,
-          marginPercent: quote.simulation.marginPercent,
-          totalCost: quote.simulation.totalCost,
-          isSimulation: true,
-        }
-      : {
-          customerTotal: quote.result.customerTotal,
-          driverValue: quote.table.driverValue,
-          netResult: quote.result.netResult,
-          marginPercent: quote.result.realMarginPercent,
-          totalCost: quote.result.totalCost,
-          isSimulation: false,
-        }
+  const officialQuote = quote
+    ? {
+        customerTotal: quote.result.customerTotal,
+        driverValue: quote.table.driverValue,
+        netResult: quote.result.netResult,
+        marginPercent: quote.result.realMarginPercent,
+        totalCost: quote.result.totalCost,
+      }
     : null;
-  const quoteDecision = displayedQuote
-    ? displayedQuote.netResult < 0
+  const simulationQuote = quote?.simulation
+    ? {
+        customerTotal: quote.simulation.customerTotal,
+        driverValue: quote.simulation.driverValue,
+        netResult: quote.simulation.netResult,
+        marginPercent: quote.simulation.marginPercent,
+        totalCost: quote.simulation.totalCost,
+      }
+    : null;
+  const displayedQuote = simulationQuote ?? officialQuote;
+  const getQuoteDecision = (quoteMetrics) =>
+    quoteMetrics
+      ? quoteMetrics.netResult < 0
       ? {
           tone: "danger",
           title: "Não recomendado fechar",
           text: "O resultado ficou negativo. Revise cliente, motorista e custos antes de negociar.",
         }
-      : displayedQuote.marginPercent < 30
+      : quoteMetrics.marginPercent < 30
         ? {
             tone: "warning",
             title: "Atenção: margem baixa",
@@ -524,8 +741,9 @@ export function App() {
             text: "A margem ficou dentro da meta de 30% para a operação.",
           }
     : null;
-  const quoteResultTone = displayedQuote?.netResult >= 0 ? "success" : "danger";
-  const quoteMarginTone = quoteDecision?.tone ?? "success";
+  const quoteDecision = getQuoteDecision(displayedQuote);
+  const officialDecision = getQuoteDecision(officialQuote);
+  const simulationDecision = getQuoteDecision(simulationQuote);
   const suggestedCustomerValue =
     displayedQuote && displayedQuote.marginPercent < 30
       ? displayedQuote.totalCost / (1 - 0.3)
@@ -667,7 +885,7 @@ export function App() {
       <main className="content quote-content">
         <section className="quote-hero">
           <div>
-            <span className="hero__eyebrow">Cálculo operacional</span>
+          <span className="hero__eyebrow">Cálculo operacional atualizado</span>
             <h2>Tabela de frete no sistema</h2>
             <p>
               Calcule o valor de motorista, cliente, impostos e resultado usando a base ANTT
@@ -675,10 +893,10 @@ export function App() {
             </p>
           </div>
           <div className="quote-hero__rate">
-            <span>Custo KM</span>
+            <span>CCD</span>
             <strong>
               {selectedRate
-                ? formatCurrency(
+                ? formatCoefficientDisplay(
                     form.loadType === "normal"
                       ? selectedRate.normalDisplacementCost
                       : selectedRate.highPerformanceDisplacementCost,
@@ -716,7 +934,7 @@ export function App() {
                   }))}
                 />
                 <FieldHint>
-                  Escolha o conjunto usado na viagem. O número de eixos define o custo por km e o piso mínimo ANTT.
+                  Escolha o conjunto usado na viagem. O número de eixos define o CCD e o CC da tabela ANTT.
                 </FieldHint>
 
                 <SegmentedControl
@@ -729,7 +947,7 @@ export function App() {
                   ]}
                 />
                 <FieldHint>
-                  Carga normal usa a tabela padrão. Carga especial usa o coeficiente maior quando a operação exige mais custo.
+                  Carga normal e carga especial usam coeficientes ANTT próprios: CCD para deslocamento e CC para carga/descarga.
                 </FieldHint>
 
                 <SegmentedControl
@@ -877,36 +1095,69 @@ export function App() {
 
             {quote ? (
               <>
-                <div className="metric-section metric-section--primary">
-                  <div className="metric-section__header">
-                    <div>
-                      <span>{displayedQuote.isSimulation ? "Simulação da negociação" : "Resultado calculado"}</span>
-                      <strong>{displayedQuote.isSimulation ? "Valores digitados para negociar" : "Valor oficial da cotação"}</strong>
+                <div className="quote-result-panels">
+                  <div className="metric-section metric-section--primary">
+                    <div className="metric-section__header">
+                      <div>
+                        <span>Cálculo da tabela</span>
+                        <strong>Valor oficial da cotação</strong>
+                      </div>
+                      <small>{quote.input.vehicleType} - {quote.input.axles} eixos</small>
                     </div>
-                    <small>{quote.input.vehicleType} - {quote.input.axles} eixos</small>
+                    <div className="quote-result-grid quote-result-grid--main">
+                      <div>
+                        <span>Cobrar do cliente</span>
+                        <strong>{formatCurrency(officialQuote.customerTotal)}</strong>
+                      </div>
+                      <div>
+                        <span>Pagar motorista</span>
+                        <strong>{formatCurrency(officialQuote.driverValue)}</strong>
+                      </div>
+                      <div className={`quote-result-grid__item--${officialQuote.netResult >= 0 ? "success" : "danger"}`}>
+                        <span>Lucro da empresa</span>
+                        <strong>{formatCurrency(officialQuote.netResult)}</strong>
+                      </div>
+                      <div className={`quote-result-grid__item--${officialDecision?.tone ?? "success"}`}>
+                        <span>Margem</span>
+                        <strong>{formatNumber(officialQuote.marginPercent)}%</strong>
+                        <small>Meta 30%</small>
+                      </div>
+                    </div>
                   </div>
-                  <div className="quote-result-grid quote-result-grid--main">
-                    <div>
-                      <span>Cobrar do cliente</span>
-                      <strong>{formatCurrency(displayedQuote.customerTotal)}</strong>
+
+                  {simulationQuote ? (
+                    <div className="metric-section metric-section--simulation">
+                      <div className="metric-section__header">
+                        <div>
+                          <span>Simulação da negociação</span>
+                          <strong>Valores digitados para negociar</strong>
+                        </div>
+                        <small>Pedido motorista / cliente</small>
+                      </div>
+                      <div className="quote-result-grid quote-result-grid--main">
+                        <div>
+                          <span>Cobrar do cliente</span>
+                          <strong>{formatCurrency(simulationQuote.customerTotal)}</strong>
+                        </div>
+                        <div>
+                          <span>Pagar motorista</span>
+                          <strong>{formatCurrency(simulationQuote.driverValue)}</strong>
+                        </div>
+                        <div className={`quote-result-grid__item--${simulationQuote.netResult >= 0 ? "success" : "danger"}`}>
+                          <span>Lucro da empresa</span>
+                          <strong>{formatCurrency(simulationQuote.netResult)}</strong>
+                        </div>
+                        <div className={`quote-result-grid__item--${simulationDecision?.tone ?? "success"}`}>
+                          <span>Margem</span>
+                          <strong>{formatNumber(simulationQuote.marginPercent)}%</strong>
+                          <small>Meta 30%</small>
+                        </div>
+                      </div>
                     </div>
-                    <div>
-                      <span>Pagar motorista</span>
-                      <strong>{formatCurrency(displayedQuote.driverValue)}</strong>
-                    </div>
-                    <div className={`quote-result-grid__item--${quoteResultTone}`}>
-                      <span>Lucro da empresa</span>
-                      <strong>{formatCurrency(displayedQuote.netResult)}</strong>
-                    </div>
-                    <div className={`quote-result-grid__item--${quoteMarginTone}`}>
-                      <span>Margem</span>
-                      <strong>{formatNumber(displayedQuote.marginPercent)}%</strong>
-                      <small>Meta 30%</small>
-                    </div>
-                  </div>
+                  ) : null}
                 </div>
 
-                <div className={`margin-alert margin-alert--${quoteMarginTone}`}>
+                <div className={`margin-alert margin-alert--${quoteDecision?.tone ?? "success"}`}>
                   <strong>{quoteDecision.title}</strong>
                   <span>{quoteDecision.text}</span>
                   {suggestedCustomerValue ? (
@@ -927,8 +1178,11 @@ export function App() {
 
                 <details className="result-details result-details--collapsed">
                   <summary>Ver detalhes do cálculo</summary>
+                  <ResultLine label="Valor mínimo ANTT" value={formatCurrency(quote.table.tableDriverValue)} />
+                  <ResultLine label="Fórmula ANTT" value={`${formatNumber(quote.input.km)} km × ${formatCoefficient(quote.table.displacementCost)} + ${formatCurrency(quote.table.loadUnloadCost)}`} />
+                  <ResultLine label="CCD" value={formatCoefficient(quote.table.displacementCost)} />
+                  <ResultLine label="CC carga/descarga" value={formatCurrency(quote.table.loadUnloadCost)} />
                   <ResultLine label="Valor cliente" value={formatCurrency(quote.result.customerTotal)} />
-                  <ResultLine label="Motorista pela tabela" value={formatCurrency(quote.table.tableDriverValue)} />
                   <ResultLine label="Base preço cliente" value={formatCurrency(quote.table.pricingReferenceValue)} />
                   <ResultLine label="CT-e usado no ICMS" value={formatCurrency(quote.input.cteValueUsed)} />
                   <ResultLine label="Seguro da carga" value={formatCurrency(quote.charges.cargoInsurance)} />
@@ -995,17 +1249,17 @@ export function App() {
           onToggle={(event) => setAnttOpen(event.currentTarget.open)}
         >
           <summary>Configuração ANTT</summary>
-          <p>Coeficientes extraídos da aba PREÇOS ANTT da planilha.</p>
+          <p>Fórmula ANTT: Valor mínimo = (KM × CCD) + CC. A operação vê o valor final; estes coeficientes ficam para conferência técnica.</p>
           <div className="table-wrapper">
             <table>
               <thead>
                 <tr>
                   <th>Veículo</th>
                   <th>Eixos</th>
-                  <th>KM normal</th>
-                  <th>Carga/descarga normal</th>
-                  <th>KM carga especial</th>
-                  <th>Carga/descarga carga especial</th>
+                  <th>CCD normal</th>
+                  <th>CC normal</th>
+                  <th>CCD carga especial</th>
+                  <th>CC carga especial</th>
                 </tr>
               </thead>
               <tbody>
@@ -1013,9 +1267,9 @@ export function App() {
                   <tr key={rate.axles}>
                     <td>{rate.vehicleType}</td>
                     <td>{rate.axles}</td>
-                    <td>{formatCurrency(rate.normalDisplacementCost)}</td>
+                    <td>{formatCoefficientDisplay(rate.normalDisplacementCost)}</td>
                     <td>{formatCurrency(rate.normalLoadUnloadCost)}</td>
-                    <td>{formatCurrency(rate.highPerformanceDisplacementCost)}</td>
+                    <td>{formatCoefficientDisplay(rate.highPerformanceDisplacementCost)}</td>
                     <td>{formatCurrency(rate.highPerformanceLoadUnloadCost)}</td>
                   </tr>
                 ))}
@@ -1682,7 +1936,7 @@ function ClientAnalysisScreen() {
         </div>
       </section>
 
-      <div className="client-analysis-layout">
+      <div className="executive-dashboard-grid executive-dashboard-grid--bottom">
         <section className="section-card">
           <header className="section-card__header">
             <div>
@@ -3060,6 +3314,7 @@ function TripControlAnalysisScreen() {
 function ThirdPartyFreightScreen() {
   const today = new Date().toISOString().slice(0, 10);
   const currentYearStart = `${new Date().getFullYear()}-01-01`;
+  const [thirdPartyView, setThirdPartyView] = useState("dashboard");
   const [filters, setFilters] = useState({
     startDate: currentYearStart,
     endDate: today,
@@ -3138,9 +3393,34 @@ function ThirdPartyFreightScreen() {
   }
 
   const top = data.summary.maiorLucro;
-  const maxMonthlyValue = Math.max(
+  const thirdPartyChartWidth = 720;
+  const thirdPartyChartHeight = 260;
+  const thirdPartyChartPadding = 28;
+  const thirdPartyMaxFinancialMonth = Math.max(
+    ...data.monthly.map((month) => Number(month.faturamento ?? 0)),
     ...data.monthly.map((month) => Number(month.lucro ?? 0)),
+    ...data.monthly.map((month) => Number(month.custoTerceiro ?? 0) + Number(month.despesasAcessorias ?? 0)),
     1,
+  );
+  const getThirdPartyMonthlyCoordinates = (month, index, key) => {
+    const availableWidth = thirdPartyChartWidth - thirdPartyChartPadding * 2;
+    const availableHeight = thirdPartyChartHeight - thirdPartyChartPadding * 2;
+    const value = key === "custoTotal"
+      ? Number(month.custoTerceiro ?? 0) + Number(month.despesasAcessorias ?? 0)
+      : Number(month[key] ?? 0);
+    const x = thirdPartyChartPadding + (data.monthly.length > 1 ? (index / (data.monthly.length - 1)) * availableWidth : availableWidth / 2);
+    const y = thirdPartyChartHeight - thirdPartyChartPadding - (value / thirdPartyMaxFinancialMonth) * availableHeight;
+    return { x, y };
+  };
+  const getThirdPartyMonthlyPolyline = (key) => data.monthly.map((month, index) => {
+    const point = getThirdPartyMonthlyCoordinates(month, index, key);
+    return `${point.x},${point.y}`;
+  }).join(" ");
+  const pendingThirdParty = data.latest.filter((item) => Number(item.valorPendente ?? 0) > 0);
+  const biggestPendingThirdParty = pendingThirdParty.reduce(
+    (biggest, item) =>
+      Number(item.valorPendente ?? 0) > Number(biggest?.valorPendente ?? 0) ? item : biggest,
+    null,
   );
 
   return (
@@ -3200,7 +3480,33 @@ function ThirdPartyFreightScreen() {
         </form>
       </section>
 
-      <section className="client-kpi-grid">
+      <section className="billing-tabs billing-tabs--sub">
+        <button
+          type="button"
+          className={thirdPartyView === "dashboard" ? "is-active" : ""}
+          onClick={() => setThirdPartyView("dashboard")}
+        >
+          Dashboard gerencial
+        </button>
+        <button
+          type="button"
+          className={thirdPartyView === "receivables" ? "is-active" : ""}
+          onClick={() => setThirdPartyView("receivables")}
+        >
+          Pendências
+        </button>
+        <button
+          type="button"
+          className={thirdPartyView === "trips" ? "is-active" : ""}
+          onClick={() => setThirdPartyView("trips")}
+        >
+          Controle de viagens
+        </button>
+      </section>
+
+      {thirdPartyView === "dashboard" ? (
+      <>
+      <section className="client-kpi-grid third-party-kpi-grid">
         <IndicatorCard
           title="Faturamento CT-e"
           value={formatCurrency(data.summary.faturamento)}
@@ -3258,85 +3564,212 @@ function ThirdPartyFreightScreen() {
             ],
           }}
         />
+        <IndicatorCard
+          title="Cartas frete"
+          value={formatNumber(data.summary.totalCartas)}
+          helper={`${formatNumber(data.summary.quantidadeCtes)} CT-es vinculados`}
+          info={{
+            description: "Quantidade de cartas frete de terceiros no período filtrado.",
+            items: [
+              "Conta as cartas frete retornadas pela análise.",
+              "CT-es vinculados ajudam a conferir o volume faturado.",
+            ],
+          }}
+        />
+        <IndicatorCard
+          title="Pendente"
+          value={formatCurrency(data.summary.valorPendente)}
+          helper={`${formatNumber(pendingThirdParty.length)} cartas com saldo`}
+          tone={data.summary.valorPendente > 0 ? "danger" : "success"}
+          info={{
+            description: "Saldo estimado ainda em aberto para pagamento ao terceiro.",
+            items: [
+              "Considera custo do terceiro e despesas acessórias menos o valor pago.",
+              "A contagem usa as cartas recentes com saldo pendente.",
+            ],
+          }}
+        />
+        <IndicatorCard
+          title="Ticket médio"
+          value={formatCurrency(data.summary.totalCartas ? data.summary.faturamento / data.summary.totalCartas : 0)}
+          helper="Faturamento médio por carta"
+          info={{
+            description: "Média de faturamento dos CT-es por carta frete.",
+            items: [
+              "Divide o faturamento total pela quantidade de cartas no filtro.",
+            ],
+          }}
+        />
+        <IndicatorCard
+          title="Peso transportado"
+          value={`${formatNumber(data.summary.peso)} kg`}
+          helper={`${formatNumber(data.summary.totalVeiculos)} veículos | ${formatNumber(data.summary.totalMotoristas)} motoristas`}
+          info={{
+            description: "Volume operacional vinculado às cartas frete de terceiros.",
+            items: [
+              "Mostra o peso total das cartas e a cobertura de veículos/motoristas.",
+            ],
+          }}
+        />
       </section>
 
       <div className="client-analysis-layout">
         <section className="section-card">
           <header className="section-card__header">
             <div>
-              <h2>Ranking de terceiros</h2>
-              <p>Ordenado pelo lucro entre CT-es vinculados e custo da carta frete.</p>
+              <h2>Top veículos mais lucrativos</h2>
+              <p>Ranking visual pelo lucro das cartas frete.</p>
             </div>
           </header>
-          <div className="table-wrapper">
-            <table className="client-ranking-table trip-ranking-table">
-              <thead>
-                <tr>
-                  <th>Posição</th>
-                  <th>Veículo</th>
-                  <th>Motorista</th>
-                  <th>Cartas</th>
-                  <th>CT-es</th>
-                  <th>Faturamento</th>
-                  <th>Custo terceiro</th>
-                  <th>Desp. acess.</th>
-                  <th>Pago</th>
-                  <th>Lucro</th>
-                  <th>Peso</th>
-                  <th>Última data</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.ranking.map((item) => (
-                  <tr key={`${item.posicao}-${item.veiculo}-${item.motorista}`}>
-                    <td>{item.posicao}</td>
-                    <td>
-                      <strong>{item.veiculo || "-"}</strong>
-                      <span>Prop. {item.proprietario || "-"}</span>
-                    </td>
-                    <td>{item.motorista || "-"}</td>
-                    <td>{formatNumber(item.totalCartas)}</td>
-                    <td>{formatNumber(item.quantidadeCtes)}</td>
-                    <td>{formatCurrency(item.faturamento)}</td>
-                    <td>{formatCurrency(item.custoTerceiro)}</td>
-                    <td>{formatCurrency(item.despesasAcessorias)}</td>
-                    <td>{formatCurrency(item.valorPago)}</td>
-                    <td className={item.faturamento > 0 && (item.lucro / item.faturamento) * 100 < 30 ? "profit-negative" : "profit-positive"}>
-                      {formatCurrency(item.lucro)}
-                    </td>
-                    <td>{formatNumber(item.peso)} kg</td>
-                    <td>{formatDate(item.ultimaData)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {!data.ranking.length ? <div className="empty-state">Nenhum frete de terceiro encontrado.</div> : null}
-          </div>
-        </section>
-
-        <section className="quote-results client-monthly-panel">
-          <header>
-            <h3>Evolução mensal</h3>
-            <span>Lucro e cartas frete</span>
-          </header>
-          <div className="client-monthly-list">
-            {data.monthly.map((month) => (
-              <div className="client-monthly-item" key={month.referencia}>
+          <div className="ranking-bars">
+            {data.ranking.slice(0, 8).map((item) => (
+              <div className="ranking-bars__item" key={`${item.posicao}-${item.veiculo}-${item.motorista}`}>
                 <div>
-                  <strong>{month.referencia}</strong>
-                  <span>{formatNumber(month.totalCartas)} cartas</span>
+                  <strong>{item.veiculo || "-"}</strong>
+                  <span>{formatNumber(item.totalCartas)} cartas | Margem {formatNumber((Number(item.lucro ?? 0) / Math.max(Number(item.faturamento ?? 0), 1)) * 100)}%</span>
                 </div>
-                <div className="client-monthly-bar">
-                  <i style={{ width: `${(month.lucro / maxMonthlyValue) * 100}%` }} />
-                </div>
-                <strong>{formatCurrency(month.lucro)}</strong>
+                <i style={{ width: `${(Number(item.lucro ?? 0) / Math.max(Number(data.ranking[0]?.lucro ?? 0), 1)) * 100}%` }} />
+                <strong>{formatCurrency(item.lucro)}</strong>
               </div>
             ))}
-            {!data.monthly.length ? <div className="empty-state">Sem evolução mensal para mostrar.</div> : null}
+            {!data.ranking.length ? <div className="empty-state">Nenhum veículo encontrado para o filtro.</div> : null}
           </div>
         </section>
       </div>
 
+      <section className="section-card executive-chart-card">
+        <header className="section-card__header">
+          <div>
+            <h2>Evolução financeira mensal</h2>
+            <p>Faturamento, lucro e custo total das cartas frete.</p>
+          </div>
+        </header>
+        <div className="financial-evolution">
+          {data.monthly.length ? (
+            <svg className="financial-line-chart" viewBox={`0 0 ${thirdPartyChartWidth} ${thirdPartyChartHeight}`} role="img" aria-label="Evolução financeira mensal de terceiros">
+              <polyline points={getThirdPartyMonthlyPolyline("faturamento")} className="line-chart__line line-chart__line--revenue" />
+              <polyline points={getThirdPartyMonthlyPolyline("lucro")} className="line-chart__line line-chart__line--profit" />
+              <polyline points={getThirdPartyMonthlyPolyline("custoTotal")} className="line-chart__line line-chart__line--cost" />
+              {data.monthly.map((month, index) => (
+                <g key={month.referencia}>
+                  <text x={thirdPartyChartPadding + (data.monthly.length > 1 ? (index / (data.monthly.length - 1)) * (thirdPartyChartWidth - thirdPartyChartPadding * 2) : (thirdPartyChartWidth - thirdPartyChartPadding * 2) / 2)} y={thirdPartyChartHeight - 6}>
+                    {month.referencia.slice(5)}
+                  </text>
+                  {[
+                    ["faturamento", "revenue", "Faturamento", month.faturamento],
+                    ["lucro", "profit", "Lucro", month.lucro],
+                    ["custoTotal", "cost", "Custo", Number(month.custoTerceiro ?? 0) + Number(month.despesasAcessorias ?? 0)],
+                  ].map(([key, tone, label, value]) => {
+                    const point = getThirdPartyMonthlyCoordinates(month, index, key);
+                    return (
+                      <circle key={key} cx={point.x} cy={point.y} r="5" className={`line-chart__dot line-chart__dot--${tone}`}>
+                        <title>{month.referencia} - {label}: {formatCurrency(value)}</title>
+                      </circle>
+                    );
+                  })}
+                </g>
+              ))}
+            </svg>
+          ) : null}
+          {!data.monthly.length ? <div className="empty-state">Sem evolução mensal para mostrar.</div> : null}
+        </div>
+        <div className="financial-chart-records">
+          {data.monthly.map((month) => (
+            <div key={month.referencia}>
+              <strong>{month.referencia}</strong>
+              <span>Fat. {formatCurrency(month.faturamento)}</span>
+              <span>Lucro {formatCurrency(month.lucro)}</span>
+              <span>Custo {formatCurrency(Number(month.custoTerceiro ?? 0) + Number(month.despesasAcessorias ?? 0))}</span>
+            </div>
+          ))}
+        </div>
+        <div className="chart-legend">
+          <span><i className="legend-dot legend-dot--info" /> Faturamento</span>
+          <span><i className="legend-dot legend-dot--success" /> Lucro</span>
+          <span><i className="legend-dot legend-dot--danger" /> Custo</span>
+        </div>
+        <div className="registry-pagination">
+          <span>
+            {summary.total
+              ? `${firstVisibleRecord}-${lastVisibleRecord} de ${formatNumber(summary.total)} registros`
+              : "Nenhum registro"}
+          </span>
+          <div>
+            <button type="button" className="secondary-button" onClick={() => changeRegistryPage(page - 1)} disabled={page <= 1}>
+              Anterior
+            </button>
+            <strong>Página {page} de {totalPages}</strong>
+            <button type="button" className="secondary-button" onClick={() => changeRegistryPage(page + 1)} disabled={page >= totalPages}>
+              Próxima
+            </button>
+          </div>
+        </div>
+      </section>
+      </>
+      ) : thirdPartyView === "receivables" ? (
+      <section className="section-card receivables-workbench">
+        <header className="section-card__header">
+          <div>
+            <h2>Central de pendências de terceiros</h2>
+            <p>Cartas frete com saldo pendente para acompanhar pagamento ao terceiro.</p>
+          </div>
+        </header>
+        <div className="receivables-summary">
+          <button type="button">
+            <span>Total pendente</span>
+            <strong>{formatCurrency(data.summary.valorPendente)}</strong>
+          </button>
+          <button type="button">
+            <span>Cartas pendentes</span>
+            <strong>{formatNumber(pendingThirdParty.length)}</strong>
+          </button>
+          <button type="button">
+            <span>Maior pendência</span>
+            <strong>{biggestPendingThirdParty ? formatCurrency(biggestPendingThirdParty.valorPendente) : "-"}</strong>
+          </button>
+          <button type="button">
+            <span>Pago no período</span>
+            <strong>{formatCurrency(data.summary.valorPago)}</strong>
+          </button>
+        </div>
+        <div className="table-wrapper">
+          <table className="client-ranking-table trip-latest-table receivables-table">
+            <thead>
+              <tr>
+                <th>Data</th>
+                <th>Carta</th>
+                <th>Veículo</th>
+                <th>Motorista</th>
+                <th>Rota</th>
+                <th>Custo</th>
+                <th>Pago terceiro</th>
+                <th>Pendente</th>
+                <th>CT-es</th>
+              </tr>
+            </thead>
+            <tbody>
+              {pendingThirdParty.map((item) => (
+                <tr key={`${item.empresa}-${item.serie}-${item.codigo}`}>
+                  <td>{formatDate(item.data)}</td>
+                  <td>{item.serie}/{item.codigo}</td>
+                  <td>{item.veiculo || "-"}</td>
+                  <td>{item.motorista || "-"}</td>
+                  <td>{item.rotas || "-"}</td>
+                  <td>{formatCurrency(item.custoTerceiro)}</td>
+                  <td>{formatCurrency(item.valorPago)}</td>
+                  <td>{formatCurrency(item.valorPendente)}</td>
+                  <td>
+                    <strong>{formatNumber(item.quantidadeCtes)}</strong>
+                    <span>{item.conhecimentos || "-"}</span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {!pendingThirdParty.length ? <div className="empty-state">Nenhuma pendência de terceiro encontrada.</div> : null}
+        </div>
+      </section>
+      ) : (
       <section className="section-card">
         <header className="section-card__header">
           <div>
@@ -3395,7 +3828,78 @@ function ThirdPartyFreightScreen() {
           {!data.latest.length ? <div className="empty-state">Nenhuma carta recente encontrada.</div> : null}
         </div>
       </section>
+      )}
     </>
+  );
+}
+
+function CitySuggestField({ label, city, uf, onChange, options, placeholder }) {
+  return (
+    <SuggestField
+      label={label}
+      value={formatCityUfValue(city, uf)}
+      options={options}
+      placeholder={placeholder}
+      className="quote-field--wide"
+      getOptionLabel={formatCityUfOption}
+      onSearch={(search) => searchRegistryOptions("cities", search)}
+      onChange={onChange}
+    />
+  );
+}
+
+function VehicleSuggestField({ value, onChange, options }) {
+  return (
+    <SuggestField
+      label="Placa do veículo"
+      value={value}
+      options={options}
+      placeholder="MQV-4C62"
+      getOptionLabel={getVehicleOptionLabel}
+      onSearch={(search) => searchRegistryOptions("vehicles", search)}
+      onChange={onChange}
+    />
+  );
+}
+
+function DriverSuggestField({ value, onChange, options }) {
+  return (
+    <SuggestField
+      label="Motorista"
+      value={value}
+      options={options}
+      placeholder="Nome do motorista"
+      getOptionLabel={getDriverOptionLabel}
+      onSearch={(search) => searchRegistryOptions("drivers", search)}
+      onChange={onChange}
+    />
+  );
+}
+
+function CustomerSuggestField({ label, value, onChange, options }) {
+  return (
+    <SuggestField
+      label={label}
+      value={value}
+      options={options}
+      placeholder="Digite o nome do cliente"
+      onSearch={(search) => searchRegistryOptions("customers", search)}
+      onChange={onChange}
+    />
+  );
+}
+
+function SellerSuggestField({ value, onChange, options }) {
+  return (
+    <SuggestField
+      label="Vendedor"
+      value={value}
+      options={options}
+      placeholder="Digite o vendedor"
+      getOptionLabel={getSellerOptionLabel}
+      onSearch={(search) => searchRegistryOptions("sellers", search)}
+      onChange={(option) => onChange(typeof option === "string" ? option : option?.name ?? "")}
+    />
   );
 }
 
@@ -3416,8 +3920,12 @@ function QuoteRegistryScreen() {
     customers: [],
     origins: [],
     destinations: [],
+    sellers: [],
+    vehicles: [],
+    drivers: [],
   });
   const [sortConfig, setSortConfig] = useState({ key: "id", direction: "desc" });
+  const [page, setPage] = useState(1);
   const [formOpen, setFormOpen] = useState(false);
   const [detailOpen, setDetailOpen] = useState(false);
   const [activeDetailTab, setActiveDetailTab] = useState("resumo");
@@ -3431,13 +3939,14 @@ function QuoteRegistryScreen() {
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
-      loadQuotes(search, sortConfig, filters);
+      loadQuotes(search, sortConfig, filters, 1);
+      setPage(1);
     }, 350);
 
     return () => window.clearTimeout(timeoutId);
   }, [search, filters]);
 
-  function buildRegistryParams(query = search, sort = sortConfig, currentFilters = filters) {
+  function buildRegistryParams(query = search, sort = sortConfig, currentFilters = filters, currentPage = page) {
     const params = new URLSearchParams();
     if (query) {
       params.set("search", query);
@@ -3449,6 +3958,8 @@ function QuoteRegistryScreen() {
     }
     params.set("sort", sort.key);
     params.set("direction", sort.direction);
+    params.set("page", currentPage);
+    params.set("pageSize", REGISTRY_PAGE_SIZE);
     return params;
   }
 
@@ -3459,14 +3970,14 @@ function QuoteRegistryScreen() {
         setOptions(await response.json());
       }
     } catch {
-      setOptions({ customers: [], origins: [], destinations: [] });
+      setOptions({ customers: [], origins: [], destinations: [], sellers: [], vehicles: [], drivers: [] });
     }
   }
 
-  async function loadQuotes(query = search, sort = sortConfig, currentFilters = filters) {
+  async function loadQuotes(query = search, sort = sortConfig, currentFilters = filters, currentPage = page) {
     setError("");
     try {
-      const params = buildRegistryParams(query, sort, currentFilters);
+      const params = buildRegistryParams(query, sort, currentFilters, currentPage);
 
       const [listResponse, summaryResponse] = await Promise.all([
         fetch(`${API_URL}/quote-registry?${params.toString()}`),
@@ -3501,6 +4012,7 @@ function QuoteRegistryScreen() {
       origin: "",
       destination: "",
     });
+    setPage(1);
   }
 
   function updateRegistryField(field, value) {
@@ -3524,15 +4036,112 @@ function QuoteRegistryScreen() {
 
   function updateCityField(cityField, ufField, value) {
     const match = [...options.origins, ...options.destinations].find(
-      (option) => option.toLocaleLowerCase("pt-BR") === value.toLocaleLowerCase("pt-BR"),
+      (option) => normalizeSearchText(formatCityUfOption(option)) === normalizeSearchText(value),
     );
+
+    if (!match && !String(value ?? "").includes("/") && !String(value ?? "").match(/\s+-\s+[a-zA-Z]{0,2}$/)) {
+      setForm((current) => ({
+        ...current,
+        [cityField]: value,
+        [ufField]: "",
+      }));
+      return;
+    }
+
     const parsed = splitCityUf(match ?? value);
 
     setForm((current) => ({
       ...current,
       [cityField]: parsed.city,
-      [ufField]: parsed.uf || current[ufField],
+      [ufField]: parsed.uf,
     }));
+  }
+
+  function applyRegistryValues(values) {
+    setForm((current) => {
+      const next = {
+        ...current,
+        ...values,
+      };
+
+      for (const [field, documentKey] of Object.entries(automaticDocumentFields)) {
+        if (field in values) {
+          next.documents = {
+            ...next.documents,
+            [documentKey]: String(values[field] ?? "").trim() !== "",
+          };
+        }
+      }
+
+      return next;
+    });
+  }
+
+  function updateVehicleField(value) {
+    if (typeof value === "string") {
+      const plate = formatPlate(value);
+      const match = options.vehicles.find(
+        (vehicle) => normalizeSearchText(formatPlate(vehicle.plate)) === normalizeSearchText(plate),
+      );
+
+      if (match) {
+        updateVehicleField(match);
+        return;
+      }
+
+      applyRegistryValues({ vehiclePlate: plate });
+      return;
+    }
+
+    const nextValues = {
+      vehiclePlate: formatPlate(value?.plate ?? ""),
+    };
+
+    if (value?.driverName) {
+      nextValues.driver = value.driverName;
+    }
+
+    if (value?.driverPhone) {
+      nextValues.driverPhone = formatPhone(value.driverPhone);
+    }
+
+    if (value?.driverLicenseNumber) {
+      nextValues.driverLicenseNumber = onlyDigits(value.driverLicenseNumber, 11);
+    }
+
+    if (value?.depositAccount) {
+      nextValues.depositAccount = value.depositAccount;
+    }
+
+    if (value?.pixKey) {
+      nextValues.pixKey = value.pixKey;
+    }
+
+    applyRegistryValues(nextValues);
+  }
+
+  function updateDriverField(value) {
+    if (typeof value === "string") {
+      const match = options.drivers.find(
+        (driver) => normalizeSearchText(driver.name) === normalizeSearchText(value),
+      );
+
+      if (match) {
+        updateDriverField(match);
+        return;
+      }
+
+      applyRegistryValues({ driver: value });
+      return;
+    }
+
+    applyRegistryValues({
+      driver: value?.name ?? "",
+      driverPhone: value?.driverPhone ? formatPhone(value.driverPhone) : form.driverPhone,
+      driverLicenseNumber: value?.driverLicenseNumber ? onlyDigits(value.driverLicenseNumber, 11) : form.driverLicenseNumber,
+      depositAccount: value?.depositAccount || form.depositAccount,
+      pixKey: value?.pixKey || form.pixKey,
+    });
   }
 
   function updateDocumentField(field, value) {
@@ -3647,7 +4256,8 @@ function QuoteRegistryScreen() {
         sortConfig.key === key && sortConfig.direction === "asc" ? "desc" : "asc",
     };
     setSortConfig(nextSort);
-    loadQuotes(search, nextSort, filters);
+    setPage(1);
+    loadQuotes(search, nextSort, filters, 1);
   }
 
   function openQuoteDetails(quote) {
@@ -3660,7 +4270,8 @@ function QuoteRegistryScreen() {
       status,
     };
     setFilters(nextFilters);
-    loadQuotes(search, sortConfig, nextFilters);
+    setPage(1);
+    loadQuotes(search, sortConfig, nextFilters, 1);
   }
 
   async function saveQuote(event) {
@@ -3718,8 +4329,7 @@ function QuoteRegistryScreen() {
 
       const saved = await response.json();
       resetForm();
-      await loadQuotes(search, sortConfig, filters);
-      await loadRegistryOptions();
+      await loadQuotes(search, sortConfig, filters, page);
       setSelectedQuote(saved);
     } catch (saveError) {
       setError(saveError.message);
@@ -3746,8 +4356,7 @@ function QuoteRegistryScreen() {
         throw new Error("Não foi possível excluir a cotação.");
       }
 
-      await loadQuotes(search, sortConfig, filters);
-      await loadRegistryOptions();
+      await loadQuotes(search, sortConfig, filters, page);
       if (selectedQuote?.id === quote.id) {
         setSelectedQuote(null);
       }
@@ -3767,6 +4376,30 @@ function QuoteRegistryScreen() {
     : 0;
   const pricePerKg = numericWeightKg > 0 ? numericCustomerValue / numericWeightKg : 0;
   const pricePerTon = numericWeightKg > 0 ? numericCustomerValue / (numericWeightKg / 1000) : 0;
+  const printableQuote = formOpen
+    ? {
+        ...(selectedQuote ?? {}),
+        ...form,
+        id: editingId ?? selectedQuote?.id ?? "",
+        customerValue: numericCustomerValue,
+        driverValue: numericDriverValue,
+        weightKg: numericWeightKg,
+        pricePerKg,
+        pricePerTon,
+      }
+    : selectedQuote;
+  const printableProfit = printableQuote
+    ? Number(printableQuote.customerValue ?? 0) - Number(printableQuote.driverValue ?? 0)
+    : 0;
+  const totalPages = Math.max(1, Math.ceil(summary.total / REGISTRY_PAGE_SIZE));
+  const firstVisibleRecord = summary.total ? (page - 1) * REGISTRY_PAGE_SIZE + 1 : 0;
+  const lastVisibleRecord = Math.min(summary.total, page * REGISTRY_PAGE_SIZE);
+
+  function changeRegistryPage(nextPage) {
+    const safePage = Math.min(totalPages, Math.max(1, nextPage));
+    setPage(safePage);
+    loadQuotes(search, sortConfig, filters, safePage);
+  }
 
   return (
     <main className="content quote-content registry-screen">
@@ -3799,7 +4432,7 @@ function QuoteRegistryScreen() {
             <button type="button" onClick={() => selectedQuote && replicateQuote(selectedQuote)} disabled={!selectedQuote}>
               Replicar
             </button>
-            <button type="button" onClick={() => selectedQuote && window.print()} disabled={!selectedQuote}>
+            <button type="button" onClick={() => printableQuote && window.print()} disabled={!printableQuote}>
               Imprimir
             </button>
           </div>
@@ -3835,6 +4468,7 @@ function QuoteRegistryScreen() {
             value={filters.customer}
             options={options.customers}
             placeholder="Filtrar por cliente"
+            onSearch={(search) => searchRegistryOptions("customers", search)}
             onChange={(value) => updateFilter("customer", value)}
           />
           <SuggestField
@@ -3842,6 +4476,8 @@ function QuoteRegistryScreen() {
             value={filters.origin}
             options={options.origins}
             placeholder="Cidade/UF de origem"
+            getOptionLabel={formatCityUfOption}
+            onSearch={(search) => searchRegistryOptions("cities", search)}
             onChange={(value) => updateFilter("origin", value)}
           />
           <SuggestField
@@ -3849,6 +4485,8 @@ function QuoteRegistryScreen() {
             value={filters.destination}
             options={options.destinations}
             placeholder="Cidade/UF de destino"
+            getOptionLabel={formatCityUfOption}
+            onSearch={(search) => searchRegistryOptions("cities", search)}
             onChange={(value) => updateFilter("destination", value)}
           />
           <label className="quote-field registry-filter-search">
@@ -3949,13 +4587,20 @@ function QuoteRegistryScreen() {
       </section>
 
       {detailOpen && formOpen ? (
-        <section className="quote-panel registry-detail-page">
+        <div
+          className="registry-detail-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="registry-detail-title"
+          onClick={resetForm}
+        >
+          <section className="quote-panel registry-detail-page" onClick={(event) => event.stopPropagation()}>
           <header className="quote-panel__header registry-detail-header">
             <div>
               <button type="button" className="registry-back-button" onClick={resetForm}>
-                Voltar para lista
+                Fechar e voltar para lista
               </button>
-              <h3>{editingId ? `Detalhes da cotação ${editingId}` : "Nova cotação"}</h3>
+              <h3 id="registry-detail-title">{editingId ? `Detalhes da cotação ${editingId}` : "Nova cotação"}</h3>
               <span className="panel-caption">
                 Dados separados por área para consultar, editar e imprimir sem ocupar a lista.
               </span>
@@ -3964,7 +4609,7 @@ function QuoteRegistryScreen() {
               <button type="button" className="secondary-button" onClick={() => selectedQuote && replicateQuote(selectedQuote)} disabled={!selectedQuote}>
                 Replicar
               </button>
-              <button type="button" className="secondary-button" onClick={() => selectedQuote && window.print()} disabled={!selectedQuote}>
+              <button type="button" className="secondary-button" onClick={() => printableQuote && window.print()} disabled={!printableQuote}>
                 Imprimir
               </button>
               <button type="submit" form="registry-detail-form" disabled={loading}>
@@ -3974,19 +4619,14 @@ function QuoteRegistryScreen() {
           </header>
 
           <div className="registry-detail-tabs">
-            {[
-              ["resumo", "Resumo"],
-              ["rota", "Rota"],
-              ["cliente", "Cliente e material"],
-              ["documentos", "Documentos"],
-              ["acoes", "Ações"],
-            ].map(([tab, label]) => (
+            {registryDetailTabs.map(([tab, icon, label]) => (
               <button
                 key={tab}
                 type="button"
                 className={activeDetailTab === tab ? "is-active" : ""}
                 onClick={() => setActiveDetailTab(tab)}
               >
+                <span aria-hidden="true">{icon}</span>
                 {label}
               </button>
             ))}
@@ -4008,11 +4648,11 @@ function QuoteRegistryScreen() {
               <>
                 <FormBlock title="Resumo">
                   <Field label="N viagem" type="text" value={form.tripNumber} onChange={(value) => updateRegistryField("tripNumber", value)} />
-                  <SelectField label="Situação" value={form.status} onChange={(value) => updateRegistryField("status", value)} options={statusOptions} />
+                  <ReadOnlyStatusField label="Situação" value={form.status} />
                   <Field label="Data" type="date" value={form.date} onChange={(value) => updateRegistryField("date", value)} />
                   <Field label="KM da viagem" value={form.tripKm} onChange={(value) => updateRegistryField("tripKm", value)} suffix="km" />
-                  <Field label="Valor da viagem" type="text" inputMode="decimal" value={form.customerValue} onChange={(value) => updateRegistryField("customerValue", value)} onBlur={() => updateRegistryField("customerValue", formatMoneyInput(form.customerValue))} suffix="R$" />
-                  <Field label="Valor pago ao motorista" type="text" inputMode="decimal" value={form.driverValue} onChange={(value) => updateRegistryField("driverValue", value)} onBlur={() => updateRegistryField("driverValue", formatMoneyInput(form.driverValue))} suffix="R$" />
+                  <MoneyField label="Valor da viagem" value={form.customerValue} onChange={(value) => updateRegistryField("customerValue", value)} />
+                  <MoneyField label="Valor pago ao motorista" value={form.driverValue} onChange={(value) => updateRegistryField("driverValue", value)} />
                 </FormBlock>
                 <div className="registry-preview">
                   <ResultLine label="R$/kg" value={formatCurrency(pricePerKg)} />
@@ -4023,24 +4663,36 @@ function QuoteRegistryScreen() {
 
             {activeDetailTab === "rota" ? (
               <FormBlock title="Rota">
-                <SuggestField label="Origem" value={form.originCity} onChange={(value) => updateCityField("originCity", "originUf", value)} options={options.origins} placeholder="Morro da Fumaca" />
-                <Field label="UF origem" type="text" value={form.originUf} onChange={(value) => updateRegistryField("originUf", formatUf(value))} placeholder="SC" />
-                <SuggestField label="Destino" value={form.destinationCity} onChange={(value) => updateCityField("destinationCity", "destinationUf", value)} options={options.destinations} placeholder="Feira de Santana" />
-                <Field label="UF destino" type="text" value={form.destinationUf} onChange={(value) => updateRegistryField("destinationUf", formatUf(value))} placeholder="BA" />
-                <Field label="Placa do veículo" type="text" value={form.vehiclePlate} onChange={(value) => updateRegistryField("vehiclePlate", formatPlate(value))} placeholder="MQV-4C62" />
-                <Field label="Motorista" type="text" value={form.driver} onChange={(value) => updateRegistryField("driver", value)} />
+                <CitySuggestField
+                  label="Origem"
+                  city={form.originCity}
+                  uf={form.originUf}
+                  onChange={(value) => updateCityField("originCity", "originUf", value)}
+                  options={options.origins}
+                  placeholder="Morro da Fumaça - SC"
+                />
+                <CitySuggestField
+                  label="Destino"
+                  city={form.destinationCity}
+                  uf={form.destinationUf}
+                  onChange={(value) => updateCityField("destinationCity", "destinationUf", value)}
+                  options={options.destinations}
+                  placeholder="Feira de Santana - BA"
+                />
+                <VehicleSuggestField value={form.vehiclePlate} onChange={updateVehicleField} options={options.vehicles} />
+                <DriverSuggestField value={form.driver} onChange={updateDriverField} options={options.drivers} />
               </FormBlock>
             ) : null}
 
             {activeDetailTab === "cliente" ? (
               <>
                 <FormBlock title="Cliente e material">
-                  <Field label="Cliente" type="text" value={form.customer} onChange={(value) => updateRegistryField("customer", value)} />
-                  <Field label="Cliente final" type="text" value={form.finalCustomer} onChange={(value) => updateRegistryField("finalCustomer", value)} />
+                  <CustomerSuggestField label="Cliente" value={form.customer} onChange={(value) => updateRegistryField("customer", value)} options={options.customers} />
+                  <CustomerSuggestField label="Cliente final" value={form.finalCustomer} onChange={(value) => updateRegistryField("finalCustomer", value)} options={options.customers} />
                   <Field label="Material" type="text" value={form.material} onChange={(value) => updateRegistryField("material", value)} />
                   <Field label="Peso" value={form.weightKg} onChange={(value) => updateRegistryField("weightKg", value)} suffix="kg" />
-                  <Field label="Vendedor" type="text" value={form.seller} onChange={(value) => updateRegistryField("seller", value)} />
-                  <Field label="Tomador do serviço" type="text" value={form.serviceTaker} onChange={(value) => updateRegistryField("serviceTaker", value)} />
+                  <SellerSuggestField value={form.seller} onChange={(value) => updateRegistryField("seller", value)} options={options.sellers} />
+                  <CustomerSuggestField label="Tomador do serviço" value={form.serviceTaker} onChange={(value) => updateRegistryField("serviceTaker", value)} options={options.customers} />
                   <SelectField label="Condição de pagamento" value={form.paymentCondition} onChange={(value) => updateRegistryField("paymentCondition", value)} options={paymentConditionOptions} />
                 </FormBlock>
                 <label className="registry-notes">
@@ -4085,7 +4737,7 @@ function QuoteRegistryScreen() {
                   <div className="registry-actions registry-actions--stacked">
                     <button type="submit" disabled={loading}>{loading ? "Salvando..." : "Salvar alterações"}</button>
                     <button type="button" className="secondary-button" onClick={() => selectedQuote && replicateQuote(selectedQuote)} disabled={!selectedQuote}>Replicar cotação</button>
-                    <button type="button" className="secondary-button" onClick={() => selectedQuote && window.print()} disabled={!selectedQuote}>Imprimir ficha</button>
+                    <button type="button" className="secondary-button" onClick={() => printableQuote && window.print()} disabled={!printableQuote}>Imprimir ficha</button>
                     <button type="button" className="secondary-button" onClick={() => updateRegistryField("status", "finalizado")}>Marcar como finalizada</button>
                     <button type="button" className="danger-button" onClick={() => updateRegistryField("status", "cancelado")}>Marcar como cancelada</button>
                     {selectedQuote ? (
@@ -4176,79 +4828,80 @@ function QuoteRegistryScreen() {
               </div>
             ) : null}
           </form>
-        </section>
+          </section>
+        </div>
       ) : null}
 
-      {selectedQuote ? (
+      {printableQuote ? (
         <div className="registry-print-only">
           <div className="print-card">
             <div className="selected-kpis">
               <div>
                 <span>Valor da viagem</span>
-                <strong>{formatCurrency(selectedQuote.customerValue)}</strong>
+                <strong>{formatCurrency(printableQuote.customerValue)}</strong>
               </div>
               <div>
                 <span>Pago ao motorista</span>
-                <strong>{formatCurrency(selectedQuote.driverValue)}</strong>
+                <strong>{formatCurrency(printableQuote.driverValue)}</strong>
               </div>
-              <div className={selectedProfit >= 0 ? "is-positive" : "is-negative"}>
+              <div className={printableProfit >= 0 ? "is-positive" : "is-negative"}>
                 <span>Lucro previsto</span>
-                <strong>{formatCurrency(selectedProfit)}</strong>
+                <strong>{formatCurrency(printableProfit)}</strong>
               </div>
               <div>
                 <span>KM da viagem</span>
-                <strong>{selectedQuote.tripKm ? `${formatNumber(selectedQuote.tripKm)} km` : "-"}</strong>
+                <strong>{printableQuote.tripKm ? `${formatNumber(printableQuote.tripKm)} km` : "-"}</strong>
               </div>
             </div>
             <div className="print-card__header">
               <img src="/rodobach-logo.png" alt="Rodobach" />
               <div>
                 <strong>Rodobach</strong>
-                <span>Viagem {selectedQuote.tripNumber || selectedQuote.id}</span>
+                <span>Viagem {printableQuote.tripNumber || printableQuote.id || "-"}</span>
               </div>
             </div>
             <div className="print-warning">
               <strong>TODA DOCUMENTAÇÃO DEVE SER LEGÍVEL</strong>
               <span>Conferir antes de encaminhar para faturamento</span>
             </div>
-            <h4>{selectedQuote.originCity}/{selectedQuote.originUf} {"->"} {selectedQuote.destinationCity}/{selectedQuote.destinationUf}</h4>
-            <ResultLine label="N viagem" value={selectedQuote.tripNumber || "-"} />
-            <ResultLine label="Situação" value={getStatusLabel(selectedQuote.status)} />
-            <ResultLine label="Placa do veículo" value={selectedQuote.vehiclePlate ? formatPlate(selectedQuote.vehiclePlate) : "-"} />
-            <ResultLine label="Cliente" value={selectedQuote.customer || "-"} />
-            <ResultLine label="Cliente final" value={selectedQuote.finalCustomer || "-"} />
-            <ResultLine label="KM da viagem" value={selectedQuote.tripKm ? `${formatNumber(selectedQuote.tripKm)} km` : "-"} />
-            <ResultLine label="Material" value={selectedQuote.material || "-"} />
-            <ResultLine label="Peso" value={`${formatNumber(selectedQuote.weightKg)} kg`} />
-            <ResultLine label="Valor cliente" value={formatCurrency(selectedQuote.customerValue)} />
-            <ResultLine label="Motorista" value={selectedQuote.driver || "-"} />
-            <ResultLine label="Valor motorista" value={formatCurrency(selectedQuote.driverValue)} />
-            <ResultLine label="Lucro previsto" value={formatCurrency(selectedProfit)} tone={getProfitTone(selectedProfit)} />
-            <ResultLine label="Tomador do serviço" value={selectedQuote.serviceTaker || selectedQuote.customer || "-"} />
-            <ResultLine label="Condição de pagamento" value={getPaymentConditionLabel(selectedQuote.paymentCondition)} />
-            <ResultLine label="Número do motorista" value={selectedQuote.driverPhone ? formatPhone(selectedQuote.driverPhone) : "-"} />
-            <ResultLine label="CNH do motorista" value={selectedQuote.driverLicenseNumber || "-"} />
-            <ResultLine label="ANTT do veículo" value={selectedQuote.vehicleAntt || "-"} />
-            <ResultLine label="Conta depósito" value={selectedQuote.depositAccount || "-"} />
-            <ResultLine label="Chave PIX" value={selectedQuote.pixKey || "-"} />
-            <ResultLine label="R$/kg" value={formatCurrency(selectedQuote.pricePerKg)} />
-            <ResultLine label="R$/ton" value={formatCurrency(selectedQuote.pricePerTon)} />
+            <h4>{printableQuote.originCity}/{printableQuote.originUf} {"->"} {printableQuote.destinationCity}/{printableQuote.destinationUf}</h4>
+            <ResultLine label="N viagem" value={printableQuote.tripNumber || "-"} />
+            <ResultLine label="Situação" value={getStatusLabel(printableQuote.status)} />
+            <ResultLine label="Placa do veículo" value={printableQuote.vehiclePlate ? formatPlate(printableQuote.vehiclePlate) : "-"} />
+            <ResultLine label="Cliente" value={printableQuote.customer || "-"} />
+            <ResultLine label="Cliente final" value={printableQuote.finalCustomer || "-"} />
+            <ResultLine label="KM da viagem" value={printableQuote.tripKm ? `${formatNumber(printableQuote.tripKm)} km` : "-"} />
+            <ResultLine label="Material" value={printableQuote.material || "-"} />
+            <ResultLine label="Peso" value={`${formatNumber(printableQuote.weightKg)} kg`} />
+            <ResultLine label="Valor cliente" value={formatCurrency(printableQuote.customerValue)} />
+            <ResultLine label="Motorista" value={printableQuote.driver || "-"} />
+            <ResultLine label="Valor motorista" value={formatCurrency(printableQuote.driverValue)} />
+            <ResultLine label="Lucro previsto" value={formatCurrency(printableProfit)} tone={getProfitTone(printableProfit)} />
+            <ResultLine label="Tomador do serviço" value={printableQuote.serviceTaker || printableQuote.customer || "-"} />
+            <ResultLine label="Condição de pagamento" value={getPaymentConditionLabel(printableQuote.paymentCondition)} />
+            <ResultLine label="Número do motorista" value={printableQuote.driverPhone ? formatPhone(printableQuote.driverPhone) : "-"} />
+            <ResultLine label="CNH do motorista" value={printableQuote.driverLicenseNumber || "-"} />
+            <ResultLine label="ANTT do veículo" value={printableQuote.vehicleAntt || "-"} />
+            <ResultLine label="Conta depósito" value={printableQuote.depositAccount || "-"} />
+            <ResultLine label="Chave PIX" value={printableQuote.pixKey || "-"} />
+            <ResultLine label="R$/kg" value={formatCurrency(printableQuote.pricePerKg)} />
+            <ResultLine label="R$/ton" value={formatCurrency(printableQuote.pricePerTon)} />
             <div className="print-checklist">
               <strong>Documentos para cadastro</strong>
               {[
-                ["Documentação das placas", selectedQuote.documents?.plates],
-                ["ANTT das placas", selectedQuote.documents?.antt],
-                ["Conta para depósito", selectedQuote.documents?.depositAccount],
-                ["Chave PIX", selectedQuote.documents?.pixKey],
-                ["CNH do motorista", selectedQuote.documents?.driverLicense],
-                ["Comprovante de residência", selectedQuote.documents?.proofOfAddress],
-                ["Número do motorista", selectedQuote.documents?.driverPhone],
+                ["Documentação das placas", printableQuote.documents?.plates],
+                ["ANTT das placas", printableQuote.documents?.antt],
+                ["Conta para depósito", printableQuote.documents?.depositAccount],
+                ["Chave PIX", printableQuote.documents?.pixKey],
+                ["CNH do motorista", printableQuote.documents?.driverLicense],
+                ["Comprovante de residência", printableQuote.documents?.proofOfAddress],
+                ["Número do motorista", printableQuote.documents?.driverPhone],
               ].map(([label, checked]) => (
                 <span key={label}>{checked ? "OK" : "__"} {label}</span>
               ))}
             </div>
-            {selectedQuote.notes && !selectedQuote.notes.startsWith("Importado da planilha") ? (
-              <p>{selectedQuote.notes}</p>
+            {printableQuote.notes && !printableQuote.notes.startsWith("Importado da planilha") ? (
+              <p>{printableQuote.notes}</p>
             ) : null}
           </div>
         </div>
