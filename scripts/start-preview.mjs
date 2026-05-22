@@ -15,9 +15,20 @@ const child = spawn(
   },
 );
 
+function shutdown(signal) {
+  if (!child.killed) {
+    child.kill(signal);
+  }
+
+  setTimeout(() => process.exit(0), 300).unref();
+}
+
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));
+
 child.on("exit", (code, signal) => {
   if (signal) {
-    process.kill(process.pid, signal);
+    process.exit(0);
     return;
   }
 

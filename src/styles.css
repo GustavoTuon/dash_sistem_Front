@@ -1387,6 +1387,23 @@ td {
   outline: 0;
 }
 
+.quote-field__control--money {
+  border-color: rgba(31, 111, 84, 0.24);
+  background: #f4fbf8;
+}
+
+.quote-field__control--money small {
+  color: #1f6f54;
+  font-size: 0.86rem;
+}
+
+.quote-field__control--money input {
+  color: #113f31;
+  font-size: 1rem;
+  font-weight: 900;
+  text-align: right;
+}
+
 .quote-field__control select {
   width: 100%;
   border: 0;
@@ -1400,6 +1417,13 @@ td {
   justify-content: flex-start;
   padding: 0 12px;
   background: #f7fafc;
+}
+
+.quote-field__control--status {
+  min-height: 50px;
+  border-color: transparent;
+  background: transparent;
+  padding: 0;
 }
 
 .quote-field__control small {
@@ -1457,6 +1481,11 @@ td {
   border-radius: 18px;
   padding: 14px;
   background: #ffffff;
+}
+
+.quote-result-panels {
+  display: grid;
+  gap: 12px;
 }
 
 .metric-section--primary {
@@ -1821,6 +1850,10 @@ td {
 .registry-row-actions button,
 .registry-back-button,
 .registry-detail-tabs button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
   min-height: 34px;
   border: 1px solid rgba(38, 58, 92, 0.12);
   border-radius: 999px;
@@ -3148,9 +3181,36 @@ td {
   background: #effaf5;
 }
 
+.registry-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+  color: var(--text-soft);
+  font-size: 0.86rem;
+  font-weight: 800;
+}
+
+.registry-pagination > div {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.registry-pagination strong {
+  color: var(--brand-dark);
+}
+
+.registry-pagination button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 .status-pill {
   display: inline-flex;
   align-items: center;
+  gap: 5px;
   min-height: 20px;
   border-radius: 999px;
   padding: 0 7px;
@@ -3160,14 +3220,23 @@ td {
   font-weight: 900;
 }
 
+.status-pill--large {
+  width: 100%;
+  min-height: 46px;
+  justify-content: center;
+  padding: 0 14px;
+  font-size: 0.92rem;
+  box-shadow: 0 12px 24px rgba(28, 51, 84, 0.08);
+}
+
 .status-pill--aguardando_cte {
-  background: #fff4d9;
-  color: #9d5b00;
+  background: #dcecff;
+  color: #155a9c;
 }
 
 .status-pill--faltando_dados {
-  background: #ffe9e9;
-  color: #a33131;
+  background: #fff0d6;
+  color: #9d5b00;
 }
 
 .status-pill--emitido {
@@ -3196,8 +3265,8 @@ td {
 }
 
 .status-pill--finalizado {
-  background: #e5f7ed;
-  color: #1f6f54;
+  background: #dff7e9;
+  color: #147245;
 }
 
 .status-pill--cancelado {
@@ -3584,6 +3653,7 @@ td {
   .quote-hero,
   .registry-filters,
   .registry-consult,
+  .registry-detail-overlay,
   .registry-list > header,
   .registry-actions,
   .registry-detail-page,
