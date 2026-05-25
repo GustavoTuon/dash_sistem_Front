@@ -39,6 +39,7 @@ const initialRegistryForm = {
   originUf: "SC",
   destinationCity: "",
   destinationUf: "",
+  routes: [],
   customer: "",
   finalCustomer: "",
   customerValue: "",
@@ -197,6 +198,16 @@ function parseFlexibleDecimal(value) {
 
 function formatNumber(value) {
   return numberFormatter.format(Number(value ?? 0));
+}
+
+function formatWeightInput(value) {
+  if (String(value ?? "").trim() === "") {
+    return "";
+  }
+
+  return Number(value ?? 0).toLocaleString("pt-BR", {
+    maximumFractionDigits: 3,
+  });
 }
 
 function formatCoefficient(value) {
@@ -848,6 +859,13 @@ export function App() {
               </button>
               <button
                 type="button"
+                className={activeModule === "financial" ? "is-active" : ""}
+                onClick={() => setActiveModule("financial")}
+              >
+                Financeiro
+              </button>
+              <button
+                type="button"
                 className={activeModule === "dailyAllowance" ? "is-active" : ""}
                 onClick={() => setActiveModule("dailyAllowance")}
               >
@@ -859,6 +877,8 @@ export function App() {
                 ? "Consulta, cadastro e impressão de fretes negociados"
                 : activeModule === "clients"
                   ? "Controle de viagens por motorista e veículo"
+                  : activeModule === "financial"
+                    ? "Recebimentos e pagamentos por centro de custo"
                   : activeModule === "dailyAllowance"
                     ? "Cálculo de diárias e parâmetros do motorista"
                   : "Base ANTT por tipo de veículo e número de eixos"}
@@ -866,10 +886,16 @@ export function App() {
           </nav>
 
           <div className="topbar__summary">
-            {activeModule === "clients" || activeModule === "dailyAllowance" ? (
+            {activeModule === "clients" || activeModule === "dailyAllowance" || activeModule === "financial" ? (
               <>
-                <span>{activeModule === "clients" ? "Análise" : "Cálculo"}</span>
-                <strong>{activeModule === "clients" ? "Faturamento" : "Diárias"}</strong>
+                <span>{activeModule === "dailyAllowance" ? "Cálculo" : "Análise"}</span>
+                <strong>
+                  {activeModule === "clients"
+                    ? "Faturamento"
+                    : activeModule === "financial"
+                      ? "Financeiro"
+                    : "Diárias"}
+                </strong>
               </>
             ) : (
               <>
@@ -1280,6 +1306,8 @@ export function App() {
       </main>
       ) : activeModule === "clients" ? (
         <BillingScreen />
+      ) : activeModule === "financial" ? (
+        <FinancialAnalysisScreen />
       ) : activeModule === "dailyAllowance" ? (
         <DailyAllowanceScreen />
       ) : (
@@ -1786,6 +1814,471 @@ function BillingScreen() {
       </section>
 
       {billingMode === "fleet" ? <TripControlAnalysisScreen /> : <ThirdPartyFreightScreen />}
+    </main>
+  );
+}
+
+function getCostCenterRisk(center) {
+  if (Number(center?.valorVencido ?? center?.overdueAmount ?? 0) > 0) {
+    return "critical";
+  }
+
+  if (Number(center?.valorAberto ?? center?.openAmount ?? 0) > 0) {
+    return "warning";
+  }
+
+  return "normal";
+}
+
+function getFinancialStatus(entry) {
+  const statusText = String(entry?.status ?? "").toLowerCase();
+  const openAmount = Number(entry?.valorAberto ?? 0);
+  const dueDate = entry?.dataVencimento ? new Date(entry.dataVencimento) : null;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  if (statusText.includes("cancel")) {
+    return "cancelado";
+  }
+
+  if (openAmount > 0 && dueDate && dueDate < today) {
+    return "vencido";
+  }
+
+  if (openAmount > 0) {
+    return "aberto";
+  }
+
+  return "quitado";
+}
+
+function getStatusLabelFromEntry(entry) {
+  const status = getFinancialStatus(entry);
+  const labels = {
+    vencido: "Vencido",
+    aberto: "Aberto",
+    quitado: "Quitado",
+    cancelado: "Cancelado",
+  };
+
+  return labels[status] ?? String(entry?.status ?? "-");
+}
+
+function getCenterPlate(center) {
+  const text = String(center?.nome ?? center?.centroNome ?? "");
+  const match = text.match(/[A-Z]{3}\d[A-Z0-9]\d{2}/i);
+  return match ? formatPlate(match[0]) : "";
+}
+
+function normalizeFinancialCenter(center) {
+  const riskLevel = getCostCenterRisk(center);
+  return {
+    ...center,
+    centerName: center.nome || `Centro ${center.codigo}`,
+    plate: getCenterPlate(center),
+    totalAmount: Number(center.valorDocumento ?? 0),
+    openAmount: Number(center.valorAberto ?? 0),
+    overdueAmount: Number(center.valorVencido ?? 0),
+    entriesCount: Number(center.totalLancamentos ?? 0),
+    overdueEntriesCount: Number(center.lancamentosVencidos ?? 0),
+    riskLevel,
+  };
+}
+
+function getSortedFinancialCenters(centers) {
+  return [...centers]
+    .map(normalizeFinancialCenter)
+    .sort((left, right) =>
+      right.overdueAmount - left.overdueAmount
+      || right.openAmount - left.openAmount
+      || right.totalAmount - left.totalAmount
+      || left.centerName.localeCompare(right.centerName, "pt-BR"),
+    );
+}
+
+function FinancialPageHeader({ center }) {
+  return (
+    <section className="financial-page-header">
+      <div>
+        <span className="hero__eyebrow">Análise financeira da frota</span>
+        <h2>Financeiro por Centro de Custo</h2>
+        <p>Recebimentos e pagamentos consolidados por frota e por veículo</p>
+      </div>
+      <div className="financial-selected-center">
+        <span>Centro selecionado</span>
+        <strong>{center || "Todos"}</strong>
+      </div>
+    </section>
+  );
+}
+
+function FinancialTabs({ value, onChange }) {
+  return (
+    <section className="billing-tabs financial-tabs">
+      <button
+        type="button"
+        className={value === "receivable" ? "is-active" : ""}
+        onClick={() => onChange("receivable")}
+      >
+        Recebimentos
+      </button>
+      <button
+        type="button"
+        className={value === "payable" ? "is-active" : ""}
+        onClick={() => onChange("payable")}
+      >
+        Pagamentos
+      </button>
+    </section>
+  );
+}
+
+function FinancialFilters({ filters, loading, onChange, onSubmit }) {
+  return (
+    <section className="quote-panel client-analysis-filters financial-filter-panel">
+      <form className="financial-filter-grid" onSubmit={onSubmit}>
+        <Field
+          label="Data inicial"
+          type="date"
+          value={filters.startDate}
+          onChange={(value) => onChange("startDate", value)}
+        />
+        <Field
+          label="Data final"
+          type="date"
+          value={filters.endDate}
+          onChange={(value) => onChange("endDate", value)}
+        />
+        <Field
+          label="Centro de custo"
+          value={filters.costCenter}
+          placeholder="Todos"
+          onChange={(value) => onChange("costCenter", value)}
+        />
+        <Field
+          label="Status"
+          type="search"
+          value={filters.status}
+          placeholder="Opcional"
+          onChange={(value) => onChange("status", value)}
+        />
+        <Field
+          label="Busca geral"
+          type="search"
+          value={filters.search}
+          placeholder="Duplicata, documento, cliente/fornecedor"
+          onChange={(value) => onChange("search", value)}
+        />
+        <button type="submit" disabled={loading}>
+          {loading ? "Carregando..." : "Atualizar"}
+        </button>
+      </form>
+    </section>
+  );
+}
+
+function FinancialKpiGrid({ summary, type }) {
+  const isReceivable = type === "receivable";
+  const overdueAmount = Number(summary.valorVencido ?? 0);
+  const totalLabel = isReceivable ? "Total do período" : "Total do período";
+
+  const cards = [
+    {
+      label: totalLabel,
+      value: formatCurrency(summary.valorDocumento),
+      helper: isReceivable ? "Recebimentos no filtro" : "Pagamentos no filtro",
+      tone: isReceivable ? "success" : "primary",
+      priority: "primary",
+    },
+    {
+      label: "Valor em aberto",
+      value: formatCurrency(summary.valorAberto),
+      helper: `${formatNumber(summary.lancamentosAbertos)} lançamentos abertos`,
+      tone: "warning",
+      priority: "primary",
+    },
+    {
+      label: "Valor vencido",
+      value: formatCurrency(overdueAmount),
+      helper: `${formatNumber(summary.lancamentosVencidos)} pendências vencidas`,
+      tone: overdueAmount > 0 ? "danger" : "neutral",
+      priority: "primary",
+    },
+    {
+      label: "Juros",
+      value: formatCurrency(summary.valorJuros),
+      helper: "Total de acréscimos",
+      tone: "neutral",
+      priority: "secondary",
+    },
+    {
+      label: "Descontos",
+      value: formatCurrency(summary.valorDesconto),
+      helper: "Total de abatimentos",
+      tone: "neutral",
+      priority: "secondary",
+    },
+    {
+      label: "Qtd lançamentos",
+      value: formatNumber(summary.totalLancamentos),
+      helper: "Registros no período",
+      tone: "neutral",
+      priority: "secondary",
+    },
+  ];
+
+  return (
+    <section className="financial-kpi-grid">
+      {cards.map((card) => (
+        <div
+          className={`financial-kpi-card financial-kpi-card--${card.tone} financial-kpi-card--${card.priority}`.trim()}
+          key={card.label}
+        >
+          <span>{card.label}</span>
+          <strong>{card.value}</strong>
+          <small>{card.helper}</small>
+        </div>
+      ))}
+    </section>
+  );
+}
+
+function CostCenterRanking({ centers }) {
+  const sortedCenters = getSortedFinancialCenters(centers);
+  const maxReference = Math.max(
+    ...sortedCenters.map((center) => Math.max(center.overdueAmount, center.openAmount, center.totalAmount)),
+    1,
+  );
+  const riskLabels = {
+    critical: "Crítico",
+    warning: "Atenção",
+    normal: "Normal",
+  };
+
+  return (
+    <section className="section-card financial-ranking-panel">
+      <header className="section-card__header">
+        <div>
+          <h2>Ranking de centros de custo</h2>
+          <p>Ordenado por maior vencido, depois aberto e impacto total.</p>
+        </div>
+      </header>
+      <div className="cost-center-ranking">
+        {sortedCenters.map((center) => (
+          <article className={`cost-center-row cost-center-row--${center.riskLevel}`} key={center.codigo}>
+            <div className="cost-center-row__vehicle" aria-hidden="true">VEI</div>
+            <div className="cost-center-row__main">
+              <strong>{center.centerName}</strong>
+              <span>{center.plate || `Centro ${center.codigo}`} - {formatNumber(center.entriesCount)} lançamentos</span>
+              <div className="cost-center-row__bar">
+                <i style={{ width: `${Math.min((Math.max(center.overdueAmount, center.openAmount, center.totalAmount) / maxReference) * 100, 100)}%` }} />
+              </div>
+            </div>
+            <div>
+              <span>Total</span>
+              <strong>{formatCurrency(center.totalAmount)}</strong>
+            </div>
+            <div>
+              <span>Aberto</span>
+              <strong>{formatCurrency(center.openAmount)}</strong>
+            </div>
+            <div>
+              <span>Vencido</span>
+              <strong>{formatCurrency(center.overdueAmount)}</strong>
+            </div>
+            <div className={`risk-badge risk-badge--${center.riskLevel}`}>
+              {riskLabels[center.riskLevel]}
+            </div>
+          </article>
+        ))}
+        {!sortedCenters.length ? <div className="empty-state">Nenhum centro de custo encontrado.</div> : null}
+      </div>
+    </section>
+  );
+}
+
+function TopOverdueList({ centers }) {
+  const overdueCenters = getSortedFinancialCenters(centers)
+    .filter((center) => center.overdueAmount > 0)
+    .slice(0, 5);
+
+  return (
+    <section className="section-card top-overdue-panel">
+      <header className="section-card__header">
+        <div>
+          <h2>Maiores pendências</h2>
+          <p>Centros com maior valor vencido.</p>
+        </div>
+      </header>
+      <div className="top-overdue-list">
+        {overdueCenters.map((center, index) => (
+          <article className="top-overdue-item" key={center.codigo}>
+            <span>{index + 1}</span>
+            <div>
+              <strong>{center.plate || center.centerName}</strong>
+              <small>{formatNumber(center.overdueEntriesCount)} lançamentos vencidos</small>
+            </div>
+            <strong>{formatCurrency(center.overdueAmount)}</strong>
+          </article>
+        ))}
+        {!overdueCenters.length ? <div className="empty-state">Sem pendências vencidas no filtro.</div> : null}
+      </div>
+    </section>
+  );
+}
+
+function FinancialEntriesTable({ rows, partyLabel }) {
+  return (
+    <section className="section-card financial-entries-panel">
+      <header className="section-card__header">
+        <div>
+          <h2>Lançamentos</h2>
+          <p>Detalhe por vencimento, documento e centro de custo.</p>
+        </div>
+      </header>
+      <div className="table-wrapper">
+        <table className="client-ranking-table financial-table">
+          <thead>
+            <tr>
+              <th>Vencimento</th>
+              <th>{partyLabel}</th>
+              <th>Documento / duplicata</th>
+              <th>Centro de custo</th>
+              <th>Status</th>
+              <th>Valor</th>
+              <th>Valor em aberto</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => {
+              const status = getFinancialStatus(row);
+              return (
+                <tr className={status === "vencido" ? "is-overdue" : ""} key={`${row.empresa}-${row.serie}-${row.duplicata}-${row.parcela}-${row.centroCodigo}`}>
+                  <td>
+                    <strong>{formatDate(row.dataVencimento)}</strong>
+                    <span>Emissão {formatDate(row.dataEmissao)}</span>
+                  </td>
+                  <td>
+                    <strong>{row.pessoaNome || row.pessoaFantasia || row.pessoaRazao || row.pessoa || "-"}</strong>
+                    <span>
+                      {[row.pessoa ? `Cód. ${row.pessoa}` : "", row.pessoaDocumento || row.documento || ""]
+                        .filter(Boolean)
+                        .join(" - ") || row.observacao || "-"}
+                    </span>
+                  </td>
+                  <td>
+                    <strong>{row.documento || row.duplicata || "-"}</strong>
+                    <span>Dup. {row.duplicata || "-"} / Parcela {row.parcela || "-"}</span>
+                  </td>
+                  <td>
+                    <strong>{getCenterPlate({ nome: row.centroNome }) || row.centroCodigo || "-"}</strong>
+                    <span>{row.centroNome || "-"}</span>
+                  </td>
+                  <td>
+                    <span className={`financial-status-badge financial-status-badge--${status}`}>
+                      {getStatusLabelFromEntry(row)}
+                    </span>
+                  </td>
+                  <td>{formatCurrency(row.valorDocumento)}</td>
+                  <td>{formatCurrency(row.valorAberto)}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        {!rows.length ? <div className="empty-state">Nenhum lançamento encontrado para o filtro.</div> : null}
+      </div>
+    </section>
+  );
+}
+
+function FinancialAnalysisScreen() {
+  const today = new Date().toISOString().slice(0, 10);
+  const currentMonthStart = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}-01`;
+  const [financialType, setFinancialType] = useState("receivable");
+  const [filters, setFilters] = useState({
+    startDate: currentMonthStart,
+    endDate: today,
+    costCenter: "",
+    search: "",
+    status: "",
+  });
+  const [data, setData] = useState({
+    summary: {
+      totalLancamentos: 0,
+      valorDocumento: 0,
+      valorAberto: 0,
+      valorVencido: 0,
+      lancamentosAbertos: 0,
+      lancamentosVencidos: 0,
+    },
+    centers: [],
+    rows: [],
+  });
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  async function loadFinancialAnalysis(type = financialType, currentFilters = filters) {
+    setLoading(true);
+    setError("");
+
+    try {
+      const params = new URLSearchParams({ type });
+      for (const [key, value] of Object.entries(currentFilters)) {
+        if (String(value ?? "").trim()) {
+          params.set(key, value);
+        }
+      }
+      params.set("limit", "100");
+
+      const response = await fetch(`${API_URL}/client-analysis/financial?${params.toString()}`);
+      if (!response.ok) {
+        throw new Error("Não foi possível carregar a análise financeira.");
+      }
+
+      setData(await response.json());
+    } catch (loadError) {
+      setError(loadError.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadFinancialAnalysis(financialType, filters);
+  }, [financialType]);
+
+  function updateFilter(field, value) {
+    setFilters((current) => ({
+      ...current,
+      [field]: value,
+    }));
+  }
+
+  function applyFilters(event) {
+    event.preventDefault();
+    loadFinancialAnalysis(financialType, filters);
+  }
+
+  const isReceivable = financialType === "receivable";
+  const partyLabel = isReceivable ? "Cliente" : "Fornecedor";
+
+  return (
+    <main className="content quote-content client-analysis-screen financial-analysis-screen">
+      <FinancialPageHeader center={filters.costCenter} />
+      <FinancialTabs value={financialType} onChange={setFinancialType} />
+
+      {error ? <div className="feedback-card feedback-card--error">{error}</div> : null}
+
+      <FinancialFilters filters={filters} loading={loading} onChange={updateFilter} onSubmit={applyFilters} />
+      <FinancialKpiGrid summary={data.summary} type={financialType} />
+
+      <div className="financial-analysis-grid">
+        <CostCenterRanking centers={data.centers} />
+        <TopOverdueList centers={data.centers} />
+      </div>
+
+      <FinancialEntriesTable rows={data.rows} partyLabel={partyLabel} />
     </main>
   );
 }
@@ -4057,6 +4550,63 @@ function QuoteRegistryScreen() {
     }));
   }
 
+  function updateRouteField(index, field, value) {
+    setForm((current) => ({
+      ...current,
+      routes: (current.routes ?? []).map((route, routeIndex) =>
+        routeIndex === index ? { ...route, [field]: value } : route,
+      ),
+    }));
+  }
+
+  function updateRouteCity(index, value) {
+    const match = [...options.origins, ...options.destinations].find(
+      (option) => normalizeSearchText(formatCityUfOption(option)) === normalizeSearchText(value),
+    );
+    const parsed = splitCityUf(match ?? value);
+
+    setForm((current) => ({
+      ...current,
+      routes: (current.routes ?? []).map((route, routeIndex) =>
+        routeIndex === index
+          ? {
+              ...route,
+              city: parsed.city,
+              uf: parsed.uf,
+            }
+          : route,
+      ),
+    }));
+  }
+
+  function addRouteStop() {
+    setForm((current) => ({
+      ...current,
+      routes: [
+        ...(current.routes ?? []),
+        {
+          sequence: (current.routes?.length ?? 0) + 1,
+          type: "entrega",
+          city: "",
+          uf: "",
+          customer: "",
+          address: "",
+          invoiceNumber: "",
+          notes: "",
+        },
+      ],
+    }));
+  }
+
+  function removeRouteStop(index) {
+    setForm((current) => ({
+      ...current,
+      routes: (current.routes ?? [])
+        .filter((_, routeIndex) => routeIndex !== index)
+        .map((route, routeIndex) => ({ ...route, sequence: routeIndex + 1 })),
+    }));
+  }
+
   function applyRegistryValues(values) {
     setForm((current) => {
       const next = {
@@ -4186,12 +4736,13 @@ function QuoteRegistryScreen() {
       originUf: quote.originUf ?? "SC",
       destinationCity: quote.destinationCity ?? "",
       destinationUf: quote.destinationUf ?? "",
+      routes: quote.routes ?? [],
       customer: quote.customer ?? "",
       finalCustomer: quote.finalCustomer ?? "",
       customerValue: formatMoneyInput(quote.customerValue),
       tripKm: quote.tripKm ?? "",
       material: quote.material ?? "",
-      weightKg: quote.weightKg ?? "",
+      weightKg: formatWeightInput(quote.weightKg),
       driver: quote.driver ?? "",
       driverValue: formatMoneyInput(quote.driverValue),
       seller: quote.seller ?? "",
@@ -4225,12 +4776,13 @@ function QuoteRegistryScreen() {
       originUf: quote.originUf ?? "SC",
       destinationCity: quote.destinationCity ?? "",
       destinationUf: quote.destinationUf ?? "",
+      routes: quote.routes ?? [],
       customer: quote.customer ?? "",
       finalCustomer: quote.finalCustomer ?? "",
       customerValue: formatMoneyInput(quote.customerValue),
       tripKm: quote.tripKm ?? "",
       material: quote.material ?? "",
-      weightKg: quote.weightKg ?? "",
+      weightKg: formatWeightInput(quote.weightKg),
       driver: quote.driver ?? "",
       driverValue: formatMoneyInput(quote.driverValue),
       seller: quote.seller ?? "",
@@ -4662,26 +5214,79 @@ function QuoteRegistryScreen() {
             ) : null}
 
             {activeDetailTab === "rota" ? (
-              <FormBlock title="Rota">
-                <CitySuggestField
-                  label="Origem"
-                  city={form.originCity}
-                  uf={form.originUf}
-                  onChange={(value) => updateCityField("originCity", "originUf", value)}
-                  options={options.origins}
-                  placeholder="Morro da Fumaça - SC"
-                />
-                <CitySuggestField
-                  label="Destino"
-                  city={form.destinationCity}
-                  uf={form.destinationUf}
-                  onChange={(value) => updateCityField("destinationCity", "destinationUf", value)}
-                  options={options.destinations}
-                  placeholder="Feira de Santana - BA"
-                />
-                <VehicleSuggestField value={form.vehiclePlate} onChange={updateVehicleField} options={options.vehicles} />
-                <DriverSuggestField value={form.driver} onChange={updateDriverField} options={options.drivers} />
-              </FormBlock>
+              <>
+                <FormBlock title="Rota principal">
+                  <CitySuggestField
+                    label="Origem"
+                    city={form.originCity}
+                    uf={form.originUf}
+                    onChange={(value) => updateCityField("originCity", "originUf", value)}
+                    options={options.origins}
+                    placeholder="Morro da Fumaça - SC"
+                  />
+                  <CitySuggestField
+                    label="Destino final"
+                    city={form.destinationCity}
+                    uf={form.destinationUf}
+                    onChange={(value) => updateCityField("destinationCity", "destinationUf", value)}
+                    options={options.destinations}
+                    placeholder="Feira de Santana - BA"
+                  />
+                  <VehicleSuggestField value={form.vehiclePlate} onChange={updateVehicleField} options={options.vehicles} />
+                  <DriverSuggestField value={form.driver} onChange={updateDriverField} options={options.drivers} />
+                </FormBlock>
+
+                <section className="form-block route-stops">
+                  <header className="route-stops__header">
+                    <div>
+                      <h4>Entregas da viagem</h4>
+                      <span>Inclua uma parada para cada entrega desta cotação.</span>
+                    </div>
+                    <button type="button" className="secondary-button" onClick={addRouteStop}>
+                      Adicionar entrega
+                    </button>
+                  </header>
+
+                  {(form.routes ?? []).map((route, index) => (
+                    <div className="route-stop" key={`${index}-${route.id ?? "nova"}`}>
+                      <strong>{index + 1}</strong>
+                      <CitySuggestField
+                        label="Cidade da entrega"
+                        city={route.city}
+                        uf={route.uf}
+                        onChange={(value) => updateRouteCity(index, value)}
+                        options={options.destinations}
+                        placeholder="Feira de Santana - BA"
+                      />
+                      <CustomerSuggestField
+                        label="Cliente/local"
+                        value={route.customer ?? ""}
+                        onChange={(value) => updateRouteField(index, "customer", value)}
+                        options={options.customers}
+                      />
+                      <Field
+                        label="Número da nota fiscal"
+                        type="text"
+                        value={route.invoiceNumber ?? route.address ?? ""}
+                        onChange={(value) => updateRouteField(index, "invoiceNumber", value)}
+                      />
+                      <Field
+                        label="Observação da entrega"
+                        type="text"
+                        value={route.notes ?? ""}
+                        onChange={(value) => updateRouteField(index, "notes", value)}
+                      />
+                      <button type="button" className="route-stop__remove" onClick={() => removeRouteStop(index)}>
+                        Remover
+                      </button>
+                    </div>
+                  ))}
+
+                  {!(form.routes ?? []).length ? (
+                    <div className="empty-state">Nenhuma entrega adicionada. Use quando a viagem tiver mais de uma parada.</div>
+                  ) : null}
+                </section>
+              </>
             ) : null}
 
             {activeDetailTab === "cliente" ? (
@@ -4785,6 +5390,7 @@ function QuoteRegistryScreen() {
                     <ResultLine label="Cliente" value={selectedQuote.customer || "-"} />
                     <ResultLine label="Cliente final" value={selectedQuote.finalCustomer || "-"} />
                     <ResultLine label="KM da viagem" value={selectedQuote.tripKm ? `${formatNumber(selectedQuote.tripKm)} km` : "-"} />
+                    <ResultLine label="Entregas" value={(selectedQuote.routes?.length ?? 0) || "-"} />
                     <ResultLine label="Material" value={selectedQuote.material || "-"} />
                     <ResultLine label="Peso" value={`${formatNumber(selectedQuote.weightKg)} kg`} />
                     <ResultLine label="Valor cliente" value={formatCurrency(selectedQuote.customerValue)} />
@@ -4834,74 +5440,95 @@ function QuoteRegistryScreen() {
 
       {printableQuote ? (
         <div className="registry-print-only">
-          <div className="print-card">
-            <div className="selected-kpis">
+          <div className="print-card print-card--romaneio">
+            <header className="print-romaneio-header">
+              <img src="/rodobach-logo.png" alt="Rodobach" />
+              <div className="print-route-title">
+                <span>Romaneio de viagem</span>
+                <strong>{printableQuote.originCity}/{printableQuote.originUf} {"->"} {printableQuote.destinationCity}/{printableQuote.destinationUf}</strong>
+              </div>
+              <div className="print-trip-badge">
+                <span>Viagem</span>
+                <strong>{printableQuote.tripNumber || printableQuote.id || "-"}</strong>
+              </div>
+            </header>
+
+            <div className="selected-kpis print-main-kpis">
               <div>
                 <span>Valor da viagem</span>
                 <strong>{formatCurrency(printableQuote.customerValue)}</strong>
-              </div>
-              <div>
-                <span>Pago ao motorista</span>
-                <strong>{formatCurrency(printableQuote.driverValue)}</strong>
               </div>
               <div className={printableProfit >= 0 ? "is-positive" : "is-negative"}>
                 <span>Lucro previsto</span>
                 <strong>{formatCurrency(printableProfit)}</strong>
               </div>
               <div>
+                <span>Pedágio</span>
+                <strong>{printableQuote.tollValue === undefined || printableQuote.tollValue === "" ? "-" : formatCurrency(printableQuote.tollValue)}</strong>
+              </div>
+              <div>
                 <span>KM da viagem</span>
                 <strong>{printableQuote.tripKm ? `${formatNumber(printableQuote.tripKm)} km` : "-"}</strong>
               </div>
             </div>
-            <div className="print-card__header">
-              <img src="/rodobach-logo.png" alt="Rodobach" />
-              <div>
-                <strong>Rodobach</strong>
-                <span>Viagem {printableQuote.tripNumber || printableQuote.id || "-"}</span>
-              </div>
-            </div>
+
             <div className="print-warning">
               <strong>TODA DOCUMENTAÇÃO DEVE SER LEGÍVEL</strong>
               <span>Conferir antes de encaminhar para faturamento</span>
             </div>
-            <h4>{printableQuote.originCity}/{printableQuote.originUf} {"->"} {printableQuote.destinationCity}/{printableQuote.destinationUf}</h4>
-            <ResultLine label="N viagem" value={printableQuote.tripNumber || "-"} />
-            <ResultLine label="Situação" value={getStatusLabel(printableQuote.status)} />
-            <ResultLine label="Placa do veículo" value={printableQuote.vehiclePlate ? formatPlate(printableQuote.vehiclePlate) : "-"} />
-            <ResultLine label="Cliente" value={printableQuote.customer || "-"} />
-            <ResultLine label="Cliente final" value={printableQuote.finalCustomer || "-"} />
-            <ResultLine label="KM da viagem" value={printableQuote.tripKm ? `${formatNumber(printableQuote.tripKm)} km` : "-"} />
-            <ResultLine label="Material" value={printableQuote.material || "-"} />
-            <ResultLine label="Peso" value={`${formatNumber(printableQuote.weightKg)} kg`} />
-            <ResultLine label="Valor cliente" value={formatCurrency(printableQuote.customerValue)} />
-            <ResultLine label="Motorista" value={printableQuote.driver || "-"} />
-            <ResultLine label="Valor motorista" value={formatCurrency(printableQuote.driverValue)} />
-            <ResultLine label="Lucro previsto" value={formatCurrency(printableProfit)} tone={getProfitTone(printableProfit)} />
-            <ResultLine label="Tomador do serviço" value={printableQuote.serviceTaker || printableQuote.customer || "-"} />
-            <ResultLine label="Condição de pagamento" value={getPaymentConditionLabel(printableQuote.paymentCondition)} />
-            <ResultLine label="Número do motorista" value={printableQuote.driverPhone ? formatPhone(printableQuote.driverPhone) : "-"} />
-            <ResultLine label="CNH do motorista" value={printableQuote.driverLicenseNumber || "-"} />
-            <ResultLine label="ANTT do veículo" value={printableQuote.vehicleAntt || "-"} />
-            <ResultLine label="Conta depósito" value={printableQuote.depositAccount || "-"} />
-            <ResultLine label="Chave PIX" value={printableQuote.pixKey || "-"} />
-            <ResultLine label="R$/kg" value={formatCurrency(printableQuote.pricePerKg)} />
-            <ResultLine label="R$/ton" value={formatCurrency(printableQuote.pricePerTon)} />
-            <div className="print-checklist">
-              <strong>Documentos para cadastro</strong>
-              {[
-                ["Documentação das placas", printableQuote.documents?.plates],
-                ["ANTT das placas", printableQuote.documents?.antt],
-                ["Conta para depósito", printableQuote.documents?.depositAccount],
-                ["Chave PIX", printableQuote.documents?.pixKey],
-                ["CNH do motorista", printableQuote.documents?.driverLicense],
-                ["Comprovante de residência", printableQuote.documents?.proofOfAddress],
-                ["Número do motorista", printableQuote.documents?.driverPhone],
-              ].map(([label, checked]) => (
-                <span key={label}>{checked ? "OK" : "__"} {label}</span>
-              ))}
-            </div>
+
+            <section className="print-section print-section--trip">
+              <strong>Dados da viagem</strong>
+              <div className="print-section__grid">
+                <ResultLine label="N viagem" value={printableQuote.tripNumber || "-"} />
+                <ResultLine label="Situação" value={getStatusLabel(printableQuote.status)} />
+                <ResultLine label="Cliente" value={printableQuote.customer || "-"} />
+                <ResultLine label="Cliente final" value={printableQuote.finalCustomer || "-"} />
+                <ResultLine label="Tomador do serviço" value={printableQuote.serviceTaker || printableQuote.customer || "-"} />
+                <ResultLine label="Entregas" value={(printableQuote.routes?.length ?? 0) || "-"} />
+                <ResultLine label="Material" value={printableQuote.material || "-"} />
+                <ResultLine label="Peso" value={`${formatNumber(printableQuote.weightKg)} kg`} />
+                <ResultLine label="Valor cliente" value={formatCurrency(printableQuote.customerValue)} />
+                <ResultLine label="R$/kg" value={formatCurrency(printableQuote.pricePerKg)} />
+                <ResultLine label="R$/ton" value={formatCurrency(printableQuote.pricePerTon)} />
+                <ResultLine label="KM da viagem" value={printableQuote.tripKm ? `${formatNumber(printableQuote.tripKm)} km` : "-"} />
+              </div>
+            </section>
+
+            <section className="print-section print-section--driver">
+              <strong>Motorista e pagamento</strong>
+              <div className="print-section__grid">
+                <ResultLine label="Motorista" value={printableQuote.driver || "-"} />
+                <ResultLine label="Placa do veículo" value={printableQuote.vehiclePlate ? formatPlate(printableQuote.vehiclePlate) : "-"} />
+                <ResultLine label="Valor motorista" value={formatCurrency(printableQuote.driverValue)} />
+                <ResultLine label="Lucro previsto" value={formatCurrency(printableProfit)} tone={getProfitTone(printableProfit)} />
+                <ResultLine label="Condição de pagamento" value={getPaymentConditionLabel(printableQuote.paymentCondition)} />
+                <ResultLine label="Número do motorista" value={printableQuote.driverPhone ? formatPhone(printableQuote.driverPhone) : "-"} />
+                <ResultLine label="CNH do motorista" value={printableQuote.driverLicenseNumber || "-"} />
+                <ResultLine label="ANTT do veículo" value={printableQuote.vehicleAntt || "-"} />
+                <ResultLine label="Conta depósito" value={printableQuote.depositAccount || "-"} />
+                <ResultLine label="Chave PIX" value={printableQuote.pixKey || "-"} />
+              </div>
+            </section>
+
+            {printableQuote.routes?.length ? (
+              <section className="print-section print-section--routes">
+                <strong>Entregas da rota</strong>
+                <div className="print-route-stops">
+                  {printableQuote.routes.map((route, index) => (
+                    <span key={`${index}-${route.city}-${route.uf}`}>
+                      <strong>{index + 1}</strong>
+                      <em>{route.city || "-"}{route.uf ? `/${route.uf}` : ""}</em>
+                      <small>{route.customer || "-"}</small>
+                      <small>{route.invoiceNumber ? `NF ${route.invoiceNumber}` : "NF -"}</small>
+                    </span>
+                  ))}
+                </div>
+              </section>
+            ) : null}
+
             {printableQuote.notes && !printableQuote.notes.startsWith("Importado da planilha") ? (
-              <p>{printableQuote.notes}</p>
+              <p className="print-notes">{printableQuote.notes}</p>
             ) : null}
           </div>
         </div>
