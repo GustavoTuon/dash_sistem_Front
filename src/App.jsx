@@ -1,7 +1,7 @@
 ﻿import React, { useEffect, useMemo, useState } from "react";
 
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:3333/api";
-const APP_ROUTES = new Set(["/", "/app"]);
+const APP_ROUTES = new Set(["/", "/app", "/ibrap", "/financeiro/recebimentos", "/financeiro/pagamentos", "/financeiro/despesas-futuras", "/financeiro/recebimentos-futuros"]);
 
 const currencyFormatter = new Intl.NumberFormat("pt-BR", {
   style: "currency",
@@ -86,6 +86,25 @@ const initialDailyParameterForm = {
   active: true,
   sortOrder: 0,
 };
+
+const initialIbrapForm = {
+  invoiceNumber: "",
+  invoiceSeries: "",
+};
+
+const CODE128_PATTERNS = [
+  "212222", "222122", "222221", "121223", "121322", "131222", "122213", "122312", "132212", "221213",
+  "221312", "231212", "112232", "122132", "122231", "113222", "123122", "123221", "223211", "221132",
+  "221231", "213212", "223112", "312131", "311222", "321122", "321221", "312212", "322112", "322211",
+  "212123", "212321", "232121", "111323", "131123", "131321", "112313", "132113", "132311", "211313",
+  "231113", "231311", "112133", "112331", "132131", "113123", "113321", "133121", "313121", "211331",
+  "231131", "213113", "213311", "213131", "311123", "311321", "331121", "312113", "312311", "332111",
+  "314111", "221411", "431111", "111224", "111422", "121124", "121421", "141122", "141221", "112214",
+  "112412", "122114", "122411", "142112", "142211", "241211", "221114", "413111", "241112", "134111",
+  "111242", "121142", "121241", "114212", "124112", "124211", "411212", "421112", "421211", "212141",
+  "214121", "412121", "111143", "111341", "131141", "114113", "114311", "411113", "411311", "113141",
+  "114131", "311141", "411131", "211412", "211214", "211232", "2331112",
+];
 
 const statusOptions = [
   { value: "faltando_dados", label: "Faltando dados" },
@@ -232,6 +251,22 @@ function formatDate(value) {
   return new Date(value).toLocaleDateString("pt-BR", { timeZone: "UTC" });
 }
 
+function toInputDate(date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function addDays(date, days) {
+  const nextDate = new Date(date);
+  nextDate.setDate(nextDate.getDate() + days);
+  return nextDate;
+}
+
+function addMonths(date, months) {
+  const nextDate = new Date(date);
+  nextDate.setMonth(nextDate.getMonth() + months);
+  return nextDate;
+}
+
 function formatPlate(value) {
   const clean = String(value ?? "")
     .toUpperCase()
@@ -255,6 +290,69 @@ function formatUf(value) {
 function onlyDigits(value, maxLength) {
   const digits = String(value ?? "").replace(/\D/g, "");
   return maxLength ? digits.slice(0, maxLength) : digits;
+}
+
+function formatInvoiceKey(value) {
+  const digits = onlyDigits(value, 44);
+  return digits.replace(/(\d{4})(?=\d)/g, "$1 ").trim();
+}
+
+function buildCode128C(value) {
+  const digits = onlyDigits(value);
+  if (!digits || digits.length % 2 !== 0) {
+    return null;
+  }
+
+  const values = [105];
+  for (let index = 0; index < digits.length; index += 2) {
+    values.push(Number(digits.slice(index, index + 2)));
+  }
+
+  const checksum = values.reduce((total, code, index) => total + code * (index === 0 ? 1 : index), 0) % 103;
+  return [...values, checksum, 106];
+}
+
+function Code128Barcode({ value }) {
+  const codes = buildCode128C(value);
+
+  if (!codes) {
+    return (
+      <div className="ibrap-barcode ibrap-barcode--empty">
+        Chave incompleta para gerar o codigo.
+      </div>
+    );
+  }
+
+  const moduleWidth = 2;
+  const height = 86;
+  const quietZone = 20;
+  const bars = [];
+  let cursor = quietZone;
+
+  codes.forEach((code, codeIndex) => {
+    const pattern = CODE128_PATTERNS[code];
+    pattern.split("").forEach((widthText, index) => {
+      const width = Number(widthText) * moduleWidth;
+      if (index % 2 === 0) {
+        bars.push({ x: cursor, width, key: `${codeIndex}-${index}` });
+      }
+      cursor += width;
+    });
+  });
+
+  const totalWidth = cursor + quietZone;
+
+  return (
+    <svg className="ibrap-barcode" viewBox={`0 0 ${totalWidth} ${height}`} role="img" aria-label="Codigo de barras da chave da nota fiscal">
+      <rect width={totalWidth} height={height} fill="#ffffff" />
+      {bars.map((bar) => (
+        <rect key={bar.key} x={bar.x} y="8" width={bar.width} height="62" fill="#111827" />
+      ))}
+      <text x={totalWidth / 2} y="82" textAnchor="middle">
+        {onlyDigits(value, 44)}
+      </text>
+    </svg>
+  );
 }
 
 function formatPhone(value) {
@@ -382,12 +480,12 @@ function ToggleField({ label, checked, onChange }) {
   );
 }
 
-function SelectField({ label, value, onChange, options }) {
+function SelectField({ label, value, onChange, options, disabled = false }) {
   return (
     <label className="quote-field">
       <span>{label}</span>
       <div className="quote-field__control">
-        <select value={value} onChange={(event) => onChange(event.target.value)}>
+        <select value={value} disabled={disabled} onChange={(event) => onChange(event.target.value)}>
           {options.map((option) => (
             <option key={option.value} value={option.value}>
               {option.label}
@@ -675,7 +773,10 @@ function IndicatorCard({ title, value, helper, tone = "", info }) {
 }
 
 export function App() {
-  const [activeModule, setActiveModule] = useState("calculator");
+  const initialPath = window.location.pathname;
+  const [activeModule, setActiveModule] = useState(
+    initialPath.startsWith("/financeiro") ? "financial" : initialPath.startsWith("/ibrap") ? "ibrap" : "calculator",
+  );
   const [rates, setRates] = useState([]);
   const [form, setForm] = useState(initialForm);
   const [quote, setQuote] = useState(null);
@@ -866,6 +967,16 @@ export function App() {
               </button>
               <button
                 type="button"
+                className={activeModule === "ibrap" ? "is-active" : ""}
+                onClick={() => {
+                  setActiveModule("ibrap");
+                  window.history.replaceState(null, "", "/ibrap");
+                }}
+              >
+                IBRAP
+              </button>
+              <button
+                type="button"
                 className={activeModule === "dailyAllowance" ? "is-active" : ""}
                 onClick={() => setActiveModule("dailyAllowance")}
               >
@@ -877,16 +988,18 @@ export function App() {
                 ? "Consulta, cadastro e impressão de fretes negociados"
                 : activeModule === "clients"
                   ? "Controle de viagens por motorista e veículo"
-                  : activeModule === "financial"
-                    ? "Recebimentos e pagamentos por centro de custo"
+                : activeModule === "financial"
+                  ? "Recebimentos e pagamentos por centro de custo"
+                  : activeModule === "ibrap"
+                    ? "Consulta e leitura da chave da nota fiscal"
                   : activeModule === "dailyAllowance"
                     ? "Cálculo de diárias e parâmetros do motorista"
-                  : "Base ANTT por tipo de veículo e número de eixos"}
+                    : "Base ANTT por tipo de veículo e número de eixos"}
             </span>
           </nav>
 
           <div className="topbar__summary">
-            {activeModule === "clients" || activeModule === "dailyAllowance" || activeModule === "financial" ? (
+            {activeModule === "clients" || activeModule === "dailyAllowance" || activeModule === "financial" || activeModule === "ibrap" ? (
               <>
                 <span>{activeModule === "dailyAllowance" ? "Cálculo" : "Análise"}</span>
                 <strong>
@@ -894,6 +1007,8 @@ export function App() {
                     ? "Faturamento"
                     : activeModule === "financial"
                       ? "Financeiro"
+                      : activeModule === "ibrap"
+                        ? "IBRAP"
                     : "Diárias"}
                 </strong>
               </>
@@ -1307,13 +1422,233 @@ export function App() {
       ) : activeModule === "clients" ? (
         <BillingScreen />
       ) : activeModule === "financial" ? (
-        <FinancialAnalysisScreen />
+        <FinancialAnalysisScreen
+          initialType={
+            initialPath.includes("/financeiro/recebimentos-futuros")
+              ? "futureReceivable"
+              : initialPath.includes("/financeiro/despesas-futuras")
+              ? "futurePayable"
+              : initialPath.includes("/financeiro/pagamentos")
+                ? "payable"
+                : "receivable"
+          }
+        />
+      ) : activeModule === "ibrap" ? (
+        <IbrapScreen />
       ) : activeModule === "dailyAllowance" ? (
         <DailyAllowanceScreen />
       ) : (
         <QuoteRegistryScreen />
       )}
     </div>
+  );
+}
+
+function IbrapScreen() {
+  const [form, setForm] = useState(initialIbrapForm);
+  const [result, setResult] = useState(null);
+  const [selectedIndex, setSelectedIndex] = useState(0);
+  const [manualKey, setManualKey] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [copyMessage, setCopyMessage] = useState("");
+
+  const selectedInvoice = result?.rows?.[selectedIndex] ?? null;
+  const activeKey = onlyDigits(selectedInvoice?.invoiceKey || manualKey, 44);
+
+  function updateIbrapField(field, value) {
+    setForm((current) => ({
+      ...current,
+      [field]: field === "invoiceNumber" || field === "invoiceSeries" ? onlyDigits(value) : value,
+    }));
+    setCopyMessage("");
+  }
+
+  async function searchInvoice(event) {
+    event.preventDefault();
+    setLoading(true);
+    setError("");
+    setCopyMessage("");
+    setResult(null);
+    setSelectedIndex(0);
+    setManualKey("");
+
+    try {
+      const params = new URLSearchParams({
+        invoiceNumber: form.invoiceNumber,
+      });
+
+      if (form.invoiceSeries) {
+        params.set("invoiceSeries", form.invoiceSeries);
+      }
+
+      const response = await fetch(`${API_URL}/ibrap/invoice-key?${params.toString()}`);
+      const payload = await response.json();
+
+      if (!response.ok) {
+        throw new Error(payload?.message || "Não foi possível consultar a nota fiscal.");
+      }
+
+      setResult(payload);
+      if (!payload.rows?.length) {
+        setError("Nenhuma nota fiscal encontrada para o número e série informados.");
+      }
+    } catch (searchError) {
+      setError(searchError.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function copyInvoiceKey() {
+    if (!activeKey) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(activeKey);
+      setCopyMessage("Chave copiada.");
+    } catch {
+      setCopyMessage("Não foi possível copiar automaticamente.");
+    }
+  }
+
+  return (
+    <main className="content quote-content ibrap-screen">
+      <section className="quote-hero ibrap-hero">
+        <div>
+          <span className="hero__eyebrow">IBRAP</span>
+          <h2>Leitura da chave da nota fiscal</h2>
+          <p>
+            Informe o número e a série para localizar a NF-e, copiar a chave e gerar o código para leitura no scanner.
+          </p>
+        </div>
+        <div className="quote-hero__rate">
+          <span>Formato</span>
+          <strong>NF-e 44</strong>
+        </div>
+      </section>
+
+      <section className="ibrap-layout">
+        <form className="quote-panel ibrap-search-panel" onSubmit={searchInvoice}>
+          <div className="quote-panel__header">
+            <div>
+              <h3>Consultar nota</h3>
+              <span>Número da nota e série</span>
+            </div>
+          </div>
+
+          <div className="ibrap-query-row">
+            <div className="ibrap-query-row__number">
+              <Field
+                label="Número da nota"
+                type="text"
+                inputMode="numeric"
+                value={form.invoiceNumber}
+                onChange={(value) => updateIbrapField("invoiceNumber", value)}
+                placeholder="Ex: 16640"
+              />
+            </div>
+            <div className="ibrap-query-row__series">
+              <Field
+                label="Série"
+                type="text"
+                inputMode="numeric"
+                value={form.invoiceSeries}
+                onChange={(value) => updateIbrapField("invoiceSeries", value)}
+                placeholder="Ex: 1"
+              />
+            </div>
+            <div className="ibrap-actions">
+              <button type="submit" disabled={loading || (!form.invoiceNumber && !form.invoiceSeries)}>
+                {loading ? "Consultando..." : "Buscar"}
+              </button>
+            </div>
+          </div>
+
+          <FieldHint>
+            A série ajuda a filtrar quando existir mais de um vínculo para o mesmo número de nota.
+          </FieldHint>
+
+          <div className="ibrap-manual-section">
+            <label className="quote-field ibrap-manual-key">
+              <span>Chave manual, se precisar gerar sem consulta</span>
+              <div className="quote-field__control">
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={formatInvoiceKey(manualKey)}
+                  placeholder="Cole a chave NF-e de 44 dígitos"
+                  onChange={(event) => setManualKey(onlyDigits(event.target.value, 44))}
+                />
+              </div>
+            </label>
+          </div>
+        </form>
+
+        <section className="quote-panel ibrap-result-panel">
+          <div className="quote-panel__header">
+            <div>
+              <h3>Chave para leitura</h3>
+              <span>{selectedInvoice ? `CT-e ${selectedInvoice.cteCode || "-"} - ${selectedInvoice.customerName || "Cliente nao informado"}` : "Resultado da consulta"}</span>
+            </div>
+            <button type="button" disabled={!activeKey} onClick={copyInvoiceKey}>
+              Copiar chave
+            </button>
+          </div>
+
+          {error ? <div className="feedback-card feedback-card--error">{error}</div> : null}
+          {copyMessage ? <div className="feedback-card feedback-card--success">{copyMessage}</div> : null}
+
+          {result?.rows?.length > 1 ? (
+            <div className="ibrap-result-tabs" aria-label="Notas encontradas">
+              {result.rows.map((row, index) => (
+                <button
+                  key={`${row.company}-${row.cteSeries}-${row.cteCode}-${index}`}
+                  type="button"
+                  className={selectedIndex === index ? "is-active" : ""}
+                  onClick={() => setSelectedIndex(index)}
+                >
+                  {row.invoiceNumber} / {row.invoiceSeries || row.cteSeries || "-"}
+                </button>
+              ))}
+            </div>
+          ) : null}
+
+          {activeKey ? (
+            <div className="ibrap-key-card">
+              <div className="ibrap-key-card__meta">
+                <span>Chave NF-e</span>
+                <strong>{formatInvoiceKey(activeKey)}</strong>
+              </div>
+              <Code128Barcode value={activeKey} />
+              <div className="ibrap-detail-grid">
+                <span>
+                  Nota
+                  <strong>{selectedInvoice?.invoiceNumber || form.invoiceNumber || "-"}</strong>
+                </span>
+                <span>
+                  Série
+                  <strong>{selectedInvoice?.invoiceSeries || form.invoiceSeries || "-"}</strong>
+                </span>
+                <span>
+                  Cliente
+                  <strong>{selectedInvoice?.customerName || "-"}</strong>
+                </span>
+                <span>
+                  CT-e
+                  <strong>{selectedInvoice?.cteCode || "-"}</strong>
+                </span>
+              </div>
+            </div>
+          ) : (
+            <div className="empty-state">
+              Busque a nota fiscal ou cole uma chave NF-e para gerar o código de leitura.
+            </div>
+          )}
+        </section>
+      </section>
+    </main>
   );
 }
 
@@ -1792,11 +2127,18 @@ function DailyAllowanceScreen() {
 }
 
 function BillingScreen() {
-  const [billingMode, setBillingMode] = useState("fleet");
+  const [billingMode, setBillingMode] = useState("clients");
 
   return (
     <main className="content quote-content client-analysis-screen">
       <section className="billing-tabs">
+        <button
+          type="button"
+          className={billingMode === "clients" ? "is-active" : ""}
+          onClick={() => setBillingMode("clients")}
+        >
+          Clientes
+        </button>
         <button
           type="button"
           className={billingMode === "fleet" ? "is-active" : ""}
@@ -1813,7 +2155,13 @@ function BillingScreen() {
         </button>
       </section>
 
-      {billingMode === "fleet" ? <TripControlAnalysisScreen /> : <ThirdPartyFreightScreen />}
+      {billingMode === "clients" ? (
+        <ClientAnalysisScreen />
+      ) : billingMode === "fleet" ? (
+        <TripControlAnalysisScreen />
+      ) : (
+        <ThirdPartyFreightScreen />
+      )}
     </main>
   );
 }
@@ -1831,6 +2179,10 @@ function getCostCenterRisk(center) {
 }
 
 function getFinancialStatus(entry) {
+  if (entry?.statusCalculado) {
+    return entry.statusCalculado === "pago" ? "quitado" : entry.statusCalculado;
+  }
+
   const statusText = String(entry?.status ?? "").toLowerCase();
   const openAmount = Number(entry?.valorAberto ?? 0);
   const dueDate = entry?.dataVencimento ? new Date(entry.dataVencimento) : null;
@@ -1852,12 +2204,22 @@ function getFinancialStatus(entry) {
   return "quitado";
 }
 
+function getPaymentStatus(payment) {
+  const status = getFinancialStatus(payment);
+  return status === "quitado" ? "pago" : status;
+}
+
+function isOverdue(payment) {
+  return getPaymentStatus(payment) === "vencido";
+}
+
 function getStatusLabelFromEntry(entry) {
   const status = getFinancialStatus(entry);
   const labels = {
     vencido: "Vencido",
     aberto: "Aberto",
     quitado: "Quitado",
+    pago: "Pago",
     cancelado: "Cancelado",
   };
 
@@ -1879,9 +2241,27 @@ function normalizeFinancialCenter(center) {
     totalAmount: Number(center.valorDocumento ?? 0),
     openAmount: Number(center.valorAberto ?? 0),
     overdueAmount: Number(center.valorVencido ?? 0),
+    paidAmount: Number(center.valorPago ?? 0),
     entriesCount: Number(center.totalLancamentos ?? 0),
     overdueEntriesCount: Number(center.lancamentosVencidos ?? 0),
+    paidEntriesCount: Number(center.lancamentosPagos ?? 0),
     riskLevel,
+  };
+}
+
+function normalizeFinancialClassification(classification) {
+  return {
+    ...classification,
+    classificationCode: classification.codigo,
+    classificationName: classification.nome || "Sem classificação",
+    classificationNature: classification.natureza || "-",
+    classificationType: classification.tipo || "-",
+    classificationMask: classification.mascara || "",
+    totalAmount: Number(classification.valorDocumento ?? 0),
+    openAmount: Number(classification.valorAberto ?? 0),
+    overdueAmount: Number(classification.valorVencido ?? 0),
+    paidAmount: Number(classification.valorPago ?? 0),
+    entriesCount: Number(classification.totalLancamentos ?? 0),
   };
 }
 
@@ -1889,23 +2269,46 @@ function getSortedFinancialCenters(centers) {
   return [...centers]
     .map(normalizeFinancialCenter)
     .sort((left, right) =>
-      right.overdueAmount - left.overdueAmount
-      || right.openAmount - left.openAmount
+      right.openAmount - left.openAmount
+      || right.overdueAmount - left.overdueAmount
       || right.totalAmount - left.totalAmount
       || left.centerName.localeCompare(right.centerName, "pt-BR"),
     );
 }
 
-function FinancialPageHeader({ center }) {
+function getSortedFinancialClassifications(classifications) {
+  return [...classifications]
+    .map(normalizeFinancialClassification)
+    .sort((left, right) =>
+      right.openAmount - left.openAmount
+      || right.overdueAmount - left.overdueAmount
+      || right.totalAmount - left.totalAmount
+      || left.classificationName.localeCompare(right.classificationName, "pt-BR"),
+    );
+}
+
+function FinancialPageHeader({ center, type }) {
+  const isPayable = type === "payable";
+  const isFuturePayable = type === "futurePayable";
+  const isFutureReceivable = type === "futureReceivable";
+
   return (
     <section className="financial-page-header">
       <div>
-        <span className="hero__eyebrow">Análise financeira da frota</span>
-        <h2>Financeiro por Centro de Custo</h2>
-        <p>Recebimentos e pagamentos consolidados por frota e por veículo</p>
+        <span className="hero__eyebrow">FINANCEIRO POR CENTRO DE CUSTO</span>
+        <h2>{isFutureReceivable ? "Forecast de Recebimentos" : isFuturePayable ? "Despesas futuras" : isPayable ? "Pagamentos" : "Recebimentos"}</h2>
+        <p>
+          {isFutureReceivable
+            ? "Analise os valores previstos a receber e o impacto no caixa futuro."
+            : isFuturePayable
+            ? "Analise os compromissos futuros em aberto por vencimento, mês e centro de custo."
+            : isPayable
+            ? "Acompanhe valores pagos, em aberto e vencidos separados por centro de custo."
+            : "Acompanhe recebimentos consolidados por frota e por veículo."}
+        </p>
       </div>
       <div className="financial-selected-center">
-        <span>Centro selecionado</span>
+        <span>Centro</span>
         <strong>{center || "Todos"}</strong>
       </div>
     </section>
@@ -1929,11 +2332,33 @@ function FinancialTabs({ value, onChange }) {
       >
         Pagamentos
       </button>
+      <button
+        type="button"
+        className={value === "futurePayable" ? "is-active" : ""}
+        onClick={() => onChange("futurePayable")}
+      >
+        Despesas futuras
+      </button>
+      <button
+        type="button"
+        className={value === "futureReceivable" ? "is-active" : ""}
+        onClick={() => onChange("futureReceivable")}
+      >
+        Recebimentos futuros
+      </button>
     </section>
   );
 }
 
-function FinancialFilters({ filters, loading, onChange, onSubmit }) {
+function FinancialFilters({ filters, loading, onChange, onSubmit, lockStatus = false, classificationOptions = [], showCustomer = false }) {
+  const statusOptions = [
+    { value: "", label: "Todos" },
+    { value: "pago", label: "Pago" },
+    { value: "aberto", label: "Em aberto" },
+    { value: "vencido", label: "Vencido" },
+    { value: "cancelado", label: "Cancelado" },
+  ];
+
   return (
     <section className="quote-panel client-analysis-filters financial-filter-panel">
       <form className="financial-filter-grid" onSubmit={onSubmit}>
@@ -1955,12 +2380,33 @@ function FinancialFilters({ filters, loading, onChange, onSubmit }) {
           placeholder="Todos"
           onChange={(value) => onChange("costCenter", value)}
         />
-        <Field
+        <SelectField
           label="Status"
-          type="search"
           value={filters.status}
-          placeholder="Opcional"
+          options={statusOptions}
+          disabled={lockStatus}
           onChange={(value) => onChange("status", value)}
+        />
+        {showCustomer ? (
+          <Field
+            label="Cliente"
+            type="search"
+            value={filters.customer}
+            placeholder="Todos"
+            onChange={(value) => onChange("customer", value)}
+          />
+        ) : null}
+        <SelectField
+          label="Classificação financeira"
+          value={filters.classification}
+          options={[
+            { value: "", label: "Todas" },
+            ...classificationOptions.map((classification) => ({
+              value: classification.codigo,
+              label: classification.nome || `Classificação ${classification.codigo}`,
+            })),
+          ]}
+          onChange={(value) => onChange("classification", value)}
         />
         <Field
           label="Busca geral"
@@ -1979,53 +2425,98 @@ function FinancialFilters({ filters, loading, onChange, onSubmit }) {
 
 function FinancialKpiGrid({ summary, type }) {
   const isReceivable = type === "receivable";
+  const isPayable = type === "payable";
   const overdueAmount = Number(summary.valorVencido ?? 0);
-  const totalLabel = isReceivable ? "Total do período" : "Total do período";
+  const totalAmount = Number(summary.valorDocumento ?? 0);
+  const paidAmount = Number(summary.valorPago ?? 0);
+  const delinquencyPercent = totalAmount > 0 ? (overdueAmount / totalAmount) * 100 : 0;
+  const receivedPercent = totalAmount > 0 ? (paidAmount / totalAmount) * 100 : 0;
+  const averageTicket = Number(summary.totalLancamentos ?? 0) > 0 ? totalAmount / Number(summary.totalLancamentos) : 0;
 
-  const cards = [
+  const payableCards = [
     {
-      label: totalLabel,
+      label: isPayable ? "Total do período" : "Total a pagar",
       value: formatCurrency(summary.valorDocumento),
-      helper: isReceivable ? "Recebimentos no filtro" : "Pagamentos no filtro",
-      tone: isReceivable ? "success" : "primary",
+      helper: `${formatNumber(summary.totalLancamentos)} lançamentos no filtro`,
+      tone: "primary",
       priority: "primary",
     },
     {
-      label: "Valor em aberto",
+      label: "Em aberto",
       value: formatCurrency(summary.valorAberto),
       helper: `${formatNumber(summary.lancamentosAbertos)} lançamentos abertos`,
       tone: "warning",
       priority: "primary",
     },
     {
-      label: "Valor vencido",
+      label: "Vencido",
       value: formatCurrency(overdueAmount),
       helper: `${formatNumber(summary.lancamentosVencidos)} pendências vencidas`,
       tone: overdueAmount > 0 ? "danger" : "neutral",
       priority: "primary",
     },
     {
-      label: "Juros",
-      value: formatCurrency(summary.valorJuros),
-      helper: "Total de acréscimos",
-      tone: "neutral",
+      label: "Pago",
+      value: formatCurrency(summary.valorPago),
+      helper: `${formatNumber(summary.lancamentosPagos)} títulos pagos`,
+      tone: "success",
+      priority: "primary",
+    },
+    {
+      label: isPayable ? "% inadimplência" : "Descontos / Juros",
+      value: isPayable ? `${formatNumber(delinquencyPercent)}%` : `${formatCurrency(summary.valorDesconto)} / ${formatCurrency(summary.valorJuros)}`,
+      helper: isPayable ? "Vencido sobre total do período" : "Composição financeira do período",
+      tone: isPayable && delinquencyPercent > 0 ? "danger" : "neutral",
+      priority: "secondary",
+    }
+  ];
+
+  const receivableCards = [
+    {
+      label: "Total do período",
+      value: formatCurrency(summary.valorDocumento),
+      helper: "Recebimentos no filtro",
+      tone: "success",
+      priority: "primary",
+    },
+    {
+      label: "Em aberto",
+      value: formatCurrency(summary.valorAberto),
+      helper: `${formatNumber(summary.lancamentosAbertos)} lançamentos abertos`,
+      tone: "warning",
+      priority: "primary",
+    },
+    {
+      label: "Pago",
+      value: formatCurrency(summary.valorPago),
+      helper: `${formatNumber(summary.lancamentosPagos)} títulos pagos`,
+      tone: "success",
+      priority: "primary",
+    },
+    {
+      label: "Vencido",
+      value: formatCurrency(overdueAmount),
+      helper: `${formatNumber(summary.lancamentosVencidos)} pendências vencidas`,
+      tone: overdueAmount > 0 ? "danger" : "neutral",
+      priority: "primary",
+    },
+    {
+      label: "% recebido",
+      value: `${formatNumber(receivedPercent)}%`,
+      helper: "Pago sobre total do período",
+      tone: "primary",
       priority: "secondary",
     },
     {
-      label: "Descontos",
-      value: formatCurrency(summary.valorDesconto),
-      helper: "Total de abatimentos",
-      tone: "neutral",
-      priority: "secondary",
-    },
-    {
-      label: "Qtd lançamentos",
-      value: formatNumber(summary.totalLancamentos),
-      helper: "Registros no período",
+      label: "Ticket médio",
+      value: formatCurrency(averageTicket),
+      helper: "Valor médio por lançamento",
       tone: "neutral",
       priority: "secondary",
     },
   ];
+
+  const cards = isReceivable ? receivableCards : payableCards;
 
   return (
     <section className="financial-kpi-grid">
@@ -2043,6 +2534,737 @@ function FinancialKpiGrid({ summary, type }) {
   );
 }
 
+function getFutureExpenseInsights(rows, monthly) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const dueIn7 = addDays(today, 7);
+  const dueIn30 = addDays(today, 30);
+  const dueIn90 = addDays(today, 90);
+
+  const inRange = (row, endDate) => {
+    const dueDate = row.dataVencimento ? new Date(row.dataVencimento) : null;
+    return dueDate && dueDate >= today && dueDate <= endDate;
+  };
+
+  const amountInRange = (endDate) =>
+    rows
+      .filter((row) => inRange(row, endDate))
+      .reduce((total, row) => total + Number(row.valorAberto ?? 0), 0);
+
+  const nextPayment = [...rows]
+    .filter((row) => row.dataVencimento)
+    .sort((left, right) => new Date(left.dataVencimento) - new Date(right.dataVencimento))[0];
+
+  const peakMonth = [...monthly]
+    .sort((left, right) => Number(right.valorAberto ?? 0) - Number(left.valorAberto ?? 0))[0];
+
+  return {
+    due7Amount: amountInRange(dueIn7),
+    due30Amount: amountInRange(dueIn30),
+    due90Amount: amountInRange(dueIn90),
+    nextPayment,
+    peakMonth,
+  };
+}
+
+function FutureExpensesKpiGrid({ summary, rows, monthly, classifications }) {
+  const insights = getFutureExpenseInsights(rows, monthly);
+  const biggestClassification = getSortedFinancialClassifications(classifications)[0];
+  const averageMonthly = monthly.length
+    ? monthly.reduce((sum, month) => sum + Number(month.valorAberto ?? 0), 0) / monthly.length
+    : 0;
+  const peakAmount = Number(insights.peakMonth?.valorAberto ?? 0);
+  const riskLevel = peakAmount > averageMonthly * 1.5 && peakAmount > 0
+    ? "Alto"
+    : peakAmount > averageMonthly * 1.15 && peakAmount > 0
+      ? "Médio"
+      : "Baixo";
+  const cards = [
+    {
+      label: "Total futuro previsto",
+      value: formatCurrency(summary.valorAberto),
+      helper: `${formatNumber(summary.lancamentosAbertos)} títulos futuros`,
+      tone: "primary",
+    },
+    {
+      label: "Próximos 7 dias",
+      value: formatCurrency(insights.due7Amount),
+      helper: "Compromissos mais urgentes",
+      tone: insights.due7Amount > 0 ? "danger" : "neutral",
+    },
+    {
+      label: "Próximos 30 dias",
+      value: formatCurrency(insights.due30Amount),
+      helper: "Pressão de caixa no curto prazo",
+      tone: "warning",
+    },
+    {
+      label: "Próximos 90 dias",
+      value: formatCurrency(insights.due90Amount),
+      helper: "Visão trimestral de desembolso",
+      tone: "primary",
+    },
+    {
+      label: "Maior concentração",
+      value: insights.peakMonth ? formatCurrency(insights.peakMonth.valorAberto) : formatCurrency(0),
+      helper: insights.peakMonth ? `Mês ${insights.peakMonth.monthLabel}` : "Sem previsão no filtro",
+      tone: "neutral",
+    },
+    {
+      label: "Média mensal",
+      value: formatCurrency(averageMonthly),
+      helper: "Forecast médio por mês",
+      tone: "primary",
+    },
+    {
+      label: "Risco financeiro",
+      value: riskLevel,
+      helper: biggestClassification ? `Maior custo: ${biggestClassification.classificationName}` : "Concentração por mês",
+      tone: riskLevel === "Alto" ? "danger" : riskLevel === "Médio" ? "warning" : "success",
+    },
+  ];
+
+  return (
+    <section className="financial-kpi-grid">
+      {cards.map((card) => (
+        <div className={`financial-kpi-card financial-kpi-card--${card.tone} financial-kpi-card--primary`} key={card.label}>
+          <span>{card.label}</span>
+          <strong>{card.value}</strong>
+          <small>{card.helper}</small>
+        </div>
+      ))}
+    </section>
+  );
+}
+
+function MonthlyPaymentsChart({
+  monthly,
+  title = "Pagamentos por mês",
+  subtitle = "Comparativo mensal entre total, pago, aberto e vencido.",
+  series = [
+    { key: "valorDocumento", label: "Total", className: "total" },
+    { key: "valorPago", label: "Pago", className: "paid" },
+    { key: "valorAberto", label: "Aberto", className: "open" },
+    { key: "valorVencido", label: "Vencido", className: "overdue" },
+  ],
+}) {
+  const maxValue = Math.max(
+    ...monthly.flatMap((month) => series.map((item) => Number(month[item.key] ?? 0))),
+    1,
+  );
+
+  return (
+    <section className="section-card payments-chart-card">
+      <header className="section-card__header">
+        <div>
+          <h2>{title}</h2>
+          <p>{subtitle}</p>
+        </div>
+      </header>
+      <div className="monthly-payments-chart">
+        {monthly.map((month) => (
+          <article className="monthly-payment-column" key={month.month || month.monthLabel}>
+            <div className="monthly-payment-column__bars" style={{ gridTemplateColumns: `repeat(${series.length}, 1fr)` }}>
+              {series.map((item) => (
+                <span
+                  className={`monthly-payment-column__bar monthly-payment-column__bar--${item.className}`}
+                  key={item.key}
+                  style={{ height: `${Math.max((Number(month[item.key] ?? 0) / maxValue) * 100, 2)}%` }}
+                  title={`${item.label}: ${formatCurrency(month[item.key])}`}
+                />
+              ))}
+            </div>
+            <strong>{month.monthLabel}</strong>
+          </article>
+        ))}
+        {!monthly.length ? <div className="empty-state">Nenhum pagamento encontrado para os filtros selecionados.</div> : null}
+      </div>
+      <div className="chart-legend payments-chart-legend">
+        {series.map((item) => (
+          <span key={item.key}><i className={`legend-dot legend-dot--${item.className}`} />{item.label}</span>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function PaymentsByCostCenterChart({ centers, title = "Pagamentos por centro de custo", subtitle = "Maiores valores por veículo/centro de custo." }) {
+  const topCenters = getSortedFinancialCenters(centers).slice(0, 10);
+  const maxValue = Math.max(...topCenters.map((center) => center.openAmount), 1);
+
+  return (
+    <section className="section-card payments-chart-card">
+      <header className="section-card__header">
+        <div>
+          <h2>{title}</h2>
+          <p>{subtitle}</p>
+        </div>
+      </header>
+      <div className="payments-center-bars">
+        {topCenters.map((center) => (
+          <article className="payments-center-bar" key={center.codigo}>
+            <div>
+              <strong>{center.plate || center.centerName}</strong>
+              <span>{center.centerName}</span>
+            </div>
+            <div className="payments-center-bar__track">
+              <i className="payments-center-bar__open" style={{ width: `${Math.min((center.openAmount / maxValue) * 100, 100)}%` }} />
+            </div>
+            <strong>{formatCurrency(center.openAmount)}</strong>
+            <small>{formatNumber(center.entriesCount)} títulos</small>
+          </article>
+        ))}
+        {!topCenters.length ? <div className="empty-state">Nenhum centro de custo encontrado.</div> : null}
+      </div>
+    </section>
+  );
+}
+
+function FinancialClassificationChart({ classifications }) {
+  const topClassifications = getSortedFinancialClassifications(classifications).slice(0, 10);
+  const maxValue = Math.max(...topClassifications.map((classification) => classification.openAmount), 1);
+
+  return (
+    <section className="section-card payments-chart-card">
+      <header className="section-card__header">
+        <div>
+          <h2>Despesas por classificação</h2>
+          <p>Principais tipos de custo previstos no período.</p>
+        </div>
+      </header>
+      <div className="payments-center-bars">
+        {topClassifications.map((classification) => (
+          <article className="payments-center-bar" key={classification.classificationCode || classification.classificationName}>
+            <div>
+              <strong>{classification.classificationName}</strong>
+              <span>{classification.classificationMask || classification.classificationNature || "Sem classificação"}</span>
+            </div>
+            <div className="payments-center-bar__track">
+              <i className="payments-center-bar__classification" style={{ width: `${Math.min((classification.openAmount / maxValue) * 100, 100)}%` }} />
+            </div>
+            <strong>{formatCurrency(classification.openAmount)}</strong>
+            <small>{formatNumber(classification.entriesCount)} títulos</small>
+          </article>
+        ))}
+        {!topClassifications.length ? <div className="empty-state">Nenhuma classificação encontrada no período.</div> : null}
+      </div>
+    </section>
+  );
+}
+
+function FinancialClassificationDonut({ classifications }) {
+  const topClassifications = getSortedFinancialClassifications(classifications).slice(0, 6);
+  const totalOpen = topClassifications.reduce((sum, item) => sum + item.openAmount, 0);
+  const colors = ["#2e78b4", "#1f6f54", "#f28c2b", "#b83a3a", "#61738e", "#8aa4bd"];
+  let offset = 0;
+  const gradientStops = topClassifications.map((classification, index) => {
+    const start = offset;
+    const size = totalOpen > 0 ? (classification.openAmount / totalOpen) * 100 : 0;
+    offset += size;
+    return `${colors[index % colors.length]} ${start}% ${offset}%`;
+  });
+
+  return (
+    <section className="section-card payment-donut-card">
+      <header className="section-card__header">
+        <div>
+          <h2>Classificação financeira</h2>
+          <p>Composição dos pagamentos por tipo de custo.</p>
+        </div>
+      </header>
+      <div className="payment-donut-layout">
+        <div
+          className="payment-donut"
+          style={{ background: totalOpen > 0 ? `conic-gradient(${gradientStops.join(", ")})` : "#edf3f8" }}
+          aria-label="Distribuição por classificação financeira"
+        >
+          <div>
+            <strong>{formatCurrency(totalOpen)}</strong>
+            <span>em aberto</span>
+          </div>
+        </div>
+        <div className="payment-donut-legend">
+          {topClassifications.map((classification, index) => (
+            <article key={classification.classificationCode || classification.classificationName}>
+              <i style={{ background: colors[index % colors.length] }} />
+              <div>
+                <strong>{classification.classificationName}</strong>
+                <span>{formatCurrency(classification.openAmount)}</span>
+              </div>
+            </article>
+          ))}
+          {!topClassifications.length ? <div className="empty-state">Nenhuma classificação no filtro.</div> : null}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function PaymentHealthCard({ summary }) {
+  const totalAmount = Number(summary.valorDocumento ?? 0);
+  const paidAmount = Number(summary.valorPago ?? 0);
+  const openAmount = Number(summary.valorAberto ?? 0);
+  const overdueAmount = Number(summary.valorVencido ?? 0);
+  const currentOpenAmount = Math.max(openAmount - overdueAmount, 0);
+  const paidPercent = totalAmount > 0 ? (paidAmount / totalAmount) * 100 : 0;
+  const openPercent = totalAmount > 0 ? (currentOpenAmount / totalAmount) * 100 : 0;
+  const overduePercent = totalAmount > 0 ? (overdueAmount / totalAmount) * 100 : 0;
+
+  return (
+    <section className="section-card payment-health-card">
+      <header className="section-card__header">
+        <div>
+          <h2>Saúde financeira</h2>
+          <p>Percentual pago versus compromissos totais do filtro.</p>
+        </div>
+        <strong>{formatNumber(paidPercent)}%</strong>
+      </header>
+      <div className="payment-health-bar" aria-label="Saúde financeira dos pagamentos">
+        <i className="payment-health-bar__paid" style={{ width: `${Math.min(paidPercent, 100)}%` }} />
+        <i className="payment-health-bar__open" style={{ width: `${Math.min(openPercent, 100)}%` }} />
+        <i className="payment-health-bar__overdue" style={{ width: `${Math.min(overduePercent, 100)}%` }} />
+      </div>
+      <div className="payment-health-metrics">
+        <span><i className="legend-dot legend-dot--paid" />Pago {formatCurrency(paidAmount)}</span>
+        <span><i className="legend-dot legend-dot--open" />Aberto {formatCurrency(openAmount)}</span>
+        <span><i className="legend-dot legend-dot--overdue" />Vencido {formatCurrency(overdueAmount)}</span>
+      </div>
+    </section>
+  );
+}
+
+function FutureForecastChart({
+  monthly,
+  title = "Forecast mensal de despesas",
+  subtitle = "Valores previstos, tendência e média mensal do horizonte selecionado.",
+  emptyText = "Nenhuma despesa futura encontrada para o horizonte selecionado.",
+}) {
+  const average = monthly.length
+    ? monthly.reduce((sum, month) => sum + Number(month.valorAberto ?? 0), 0) / monthly.length
+    : 0;
+  const maxValue = Math.max(...monthly.map((month) => Number(month.valorAberto ?? 0)), average, 1);
+  const averagePosition = 100 - Math.min((average / maxValue) * 100, 100);
+
+  return (
+    <section className="section-card future-forecast-card">
+      <header className="section-card__header">
+        <div>
+          <h2>{title}</h2>
+          <p>{subtitle}</p>
+        </div>
+        <div className="forecast-average-pill">
+          <span>Média</span>
+          <strong>{formatCurrency(average)}</strong>
+        </div>
+      </header>
+      <div className="future-forecast-chart">
+        <span className="future-forecast-average-line" style={{ top: `${averagePosition}%` }} />
+        {monthly.map((month, index) => {
+          const amount = Number(month.valorAberto ?? 0);
+          const previousAmount = Number(monthly[index - 1]?.valorAberto ?? 0);
+          const trend = index === 0 || previousAmount === 0 ? 0 : ((amount - previousAmount) / previousAmount) * 100;
+
+          return (
+            <article className="future-forecast-column" key={month.month || month.monthLabel}>
+              <div className="future-forecast-column__bar">
+                <i style={{ height: `${Math.max((amount / maxValue) * 100, 2)}%` }} />
+              </div>
+              <strong>{month.monthLabel}</strong>
+              <span>{formatCurrency(amount)}</span>
+              {index > 0 ? <small className={trend >= 0 ? "is-up" : "is-down"}>{trend >= 0 ? "+" : ""}{formatNumber(trend)}%</small> : <small>-</small>}
+            </article>
+          );
+        })}
+        {!monthly.length ? <div className="empty-state">{emptyText}</div> : null}
+      </div>
+    </section>
+  );
+}
+
+function FutureDueHeatmap({ rows, monthly }) {
+  const buckets = [
+    { key: "1-7", label: "Dias 1-7", start: 1, end: 7 },
+    { key: "8-15", label: "Dias 8-15", start: 8, end: 15 },
+    { key: "16-23", label: "Dias 16-23", start: 16, end: 23 },
+    { key: "24-31", label: "Dias 24-31", start: 24, end: 31 },
+  ];
+  const monthLabels = monthly.map((month) => month.monthLabel);
+  const valuesByMonth = new Map(monthLabels.map((label) => [label, Object.fromEntries(buckets.map((bucket) => [bucket.key, 0]))]));
+
+  rows.forEach((row) => {
+    if (!row.dataVencimento) {
+      return;
+    }
+
+    const dueDate = new Date(row.dataVencimento);
+    const monthLabel = dueDate.toLocaleDateString("pt-BR", { month: "short", year: "2-digit", timeZone: "UTC" }).replace(".", "");
+    if (!valuesByMonth.has(monthLabel)) {
+      valuesByMonth.set(monthLabel, Object.fromEntries(buckets.map((bucket) => [bucket.key, 0])));
+    }
+
+    const day = dueDate.getUTCDate();
+    const bucket = buckets.find((item) => day >= item.start && day <= item.end);
+    if (bucket) {
+      valuesByMonth.get(monthLabel)[bucket.key] += Number(row.valorAberto ?? 0);
+    }
+  });
+
+  const maxValue = Math.max(
+    ...[...valuesByMonth.values()].flatMap((bucketValues) => Object.values(bucketValues)),
+    1,
+  );
+
+  return (
+    <section className="section-card future-heatmap-card">
+      <header className="section-card__header">
+        <div>
+          <h2>Heatmap de vencimentos</h2>
+          <p>Concentração financeira por período do mês.</p>
+        </div>
+      </header>
+      <div className="future-heatmap">
+        <div className="future-heatmap__head" />
+        {buckets.map((bucket) => <strong key={bucket.key}>{bucket.label}</strong>)}
+        {[...valuesByMonth.entries()].map(([monthLabel, bucketValues]) => (
+          <React.Fragment key={monthLabel}>
+            <strong>{monthLabel}</strong>
+            {buckets.map((bucket) => {
+              const value = bucketValues[bucket.key] || 0;
+              const intensity = Math.min(value / maxValue, 1);
+              return (
+                <span
+                  key={bucket.key}
+                  style={{ "--heat": intensity }}
+                  title={`${monthLabel} - ${bucket.label}: ${formatCurrency(value)}`}
+                >
+                  {formatCurrency(value)}
+                </span>
+              );
+            })}
+          </React.Fragment>
+        ))}
+        {!valuesByMonth.size ? <div className="empty-state">Sem vencimentos no período.</div> : null}
+      </div>
+    </section>
+  );
+}
+
+function FutureUpcomingCommitments({ rows }) {
+  const upcoming = [...rows]
+    .filter((row) => Number(row.valorAberto ?? 0) > 0)
+    .sort((left, right) =>
+      new Date(left.dataVencimento || "2999-12-31") - new Date(right.dataVencimento || "2999-12-31")
+      || Number(right.valorAberto ?? 0) - Number(left.valorAberto ?? 0),
+    )
+    .slice(0, 5);
+
+  return (
+    <section className="section-card future-upcoming-card">
+      <header className="section-card__header">
+        <div>
+          <h2>Próximos compromissos</h2>
+          <p>Top 5 vencimentos futuros para priorizar.</p>
+        </div>
+      </header>
+      <div className="future-upcoming-list">
+        {upcoming.map((row) => (
+          <article key={`${row.empresa}-${row.duplicata}-${row.parcela}-${row.centroCodigo}`}>
+            <time>{formatDate(row.dataVencimento)}</time>
+            <div>
+              <strong>{row.pessoaNome || row.pessoaFantasia || row.pessoaRazao || row.documento || row.duplicata || "-"}</strong>
+              <span>{row.classificacaoNome || "Sem classificação"}</span>
+            </div>
+            <strong>{formatCurrency(row.valorAberto)}</strong>
+          </article>
+        ))}
+        {!upcoming.length ? <div className="empty-state">Nenhum compromisso futuro no horizonte selecionado.</div> : null}
+      </div>
+    </section>
+  );
+}
+
+function FutureHorizonSelector({ value, onChange }) {
+  const options = [
+    { value: "30d", label: "30 dias" },
+    { value: "90d", label: "90 dias" },
+    { value: "12m", label: "12 meses" },
+    { value: "24m", label: "24 meses" },
+  ];
+
+  return (
+    <section className="future-horizon-selector" aria-label="Horizonte temporal">
+      {options.map((option) => (
+        <button
+          type="button"
+          className={value === option.value ? "is-active" : ""}
+          onClick={() => onChange(option.value)}
+          key={option.value}
+        >
+          {option.label}
+        </button>
+      ))}
+    </section>
+  );
+}
+
+function FutureExpensesDashboard({ data, horizon, onHorizonChange }) {
+  return (
+    <>
+      <FutureHorizonSelector value={horizon} onChange={onHorizonChange} />
+      <FutureExpensesKpiGrid summary={data.summary} rows={data.rows} monthly={data.monthly} classifications={data.classifications} />
+      <FutureForecastChart monthly={data.monthly} />
+      <div className="future-dashboard-grid">
+        <FinancialClassificationDonut classifications={data.classifications} />
+        <FutureDueHeatmap rows={data.rows} monthly={data.monthly} />
+      </div>
+      <FutureUpcomingCommitments rows={data.rows} />
+    </>
+  );
+}
+
+function getClientForecast(rows) {
+  const clients = new Map();
+  rows.forEach((row) => {
+    const key = row.pessoa || row.pessoaNome || "sem-cliente";
+    const current = clients.get(key) || {
+      name: row.pessoaNome || row.pessoaFantasia || row.pessoaRazao || "Sem cliente",
+      amount: 0,
+      count: 0,
+    };
+    current.amount += Number(row.valorAberto ?? 0);
+    current.count += 1;
+    clients.set(key, current);
+  });
+
+  return [...clients.values()].sort((left, right) => right.amount - left.amount);
+}
+
+function FutureReceivablesKpiGrid({ summary, rows, monthly }) {
+  const insights = getFutureExpenseInsights(rows, monthly);
+  const averageMonthly = monthly.length
+    ? monthly.reduce((sum, month) => sum + Number(month.valorAberto ?? 0), 0) / monthly.length
+    : 0;
+  const totalOpen = Number(summary.valorAberto ?? 0);
+  const overduePercent = totalOpen > 0 ? (Number(summary.valorVencido ?? 0) / totalOpen) * 100 : 0;
+  const topClient = getClientForecast(rows)[0];
+  const topClientShare = totalOpen > 0 ? ((topClient?.amount || 0) / totalOpen) * 100 : 0;
+  const riskLevel = overduePercent > 12 || topClientShare > 45
+    ? "Alto"
+    : overduePercent > 4 || topClientShare > 30
+      ? "Médio"
+      : "Baixo";
+  const cards = [
+    { label: "Total futuro previsto a receber", value: formatCurrency(summary.valorAberto), helper: `${formatNumber(summary.lancamentosAbertos)} títulos em aberto`, tone: "success" },
+    { label: "Próximos 7 dias", value: formatCurrency(insights.due7Amount), helper: "Entradas mais próximas", tone: "primary" },
+    { label: "Próximos 30 dias", value: formatCurrency(insights.due30Amount), helper: "Previsão de curto prazo", tone: "primary" },
+    { label: "Próximos 90 dias", value: formatCurrency(insights.due90Amount), helper: "Visão trimestral de caixa", tone: "primary" },
+    { label: "Maior concentração mensal", value: insights.peakMonth ? formatCurrency(insights.peakMonth.valorAberto) : formatCurrency(0), helper: insights.peakMonth ? `Mês ${insights.peakMonth.monthLabel}` : "Sem previsão no filtro", tone: "neutral" },
+    { label: "Média mensal prevista", value: formatCurrency(averageMonthly), helper: "Média do horizonte selecionado", tone: "primary" },
+    { label: "Risco de recebimento", value: riskLevel, helper: topClient ? `Maior cliente: ${formatNumber(topClientShare)}%` : "Concentração e vencidos", tone: riskLevel === "Alto" ? "danger" : riskLevel === "Médio" ? "warning" : "success" },
+  ];
+
+  return (
+    <section className="financial-kpi-grid">
+      {cards.map((card) => (
+        <div className={`financial-kpi-card financial-kpi-card--${card.tone} financial-kpi-card--primary`} key={card.label}>
+          <span>{card.label}</span>
+          <strong>{card.value}</strong>
+          <small>{card.helper}</small>
+        </div>
+      ))}
+    </section>
+  );
+}
+
+function FutureCashFlowChart({ receivableMonthly, payableMonthly }) {
+  const payableByMonth = new Map(payableMonthly.map((month) => [month.monthLabel, Number(month.valorAberto ?? 0)]));
+  const rows = receivableMonthly.map((month) => {
+    const receivable = Number(month.valorAberto ?? 0);
+    const payable = payableByMonth.get(month.monthLabel) || 0;
+    return { monthLabel: month.monthLabel, receivable, payable, balance: receivable - payable };
+  });
+  const maxValue = Math.max(...rows.flatMap((row) => [row.receivable, row.payable, Math.abs(row.balance)]), 1);
+
+  return (
+    <section className="section-card future-cashflow-card">
+      <header className="section-card__header">
+        <div>
+          <h2>Fluxo líquido projetado</h2>
+          <p>Receber menos pagar por mês no horizonte selecionado.</p>
+        </div>
+      </header>
+      <div className="future-cashflow-chart">
+        {rows.map((row) => (
+          <article key={row.monthLabel}>
+            <div className="future-cashflow-bars">
+              <i className="cashflow-receivable" style={{ height: `${Math.max((row.receivable / maxValue) * 100, 2)}%` }} title={`Receber: ${formatCurrency(row.receivable)}`} />
+              <i className="cashflow-payable" style={{ height: `${Math.max((row.payable / maxValue) * 100, 2)}%` }} title={`Pagar: ${formatCurrency(row.payable)}`} />
+            </div>
+            <strong>{row.monthLabel}</strong>
+            <span className={row.balance >= 0 ? "is-positive" : "is-negative"}>{formatCurrency(row.balance)}</span>
+          </article>
+        ))}
+      </div>
+      <div className="chart-legend payments-chart-legend">
+        <span><i className="legend-dot legend-dot--paid" />Receber</span>
+        <span><i className="legend-dot legend-dot--overdue" />Pagar</span>
+      </div>
+    </section>
+  );
+}
+
+function FutureClientDonut({ rows }) {
+  const topClients = getClientForecast(rows).slice(0, 6);
+  const total = topClients.reduce((sum, client) => sum + client.amount, 0);
+  const colors = ["#1f6f54", "#2e78b4", "#f28c2b", "#61738e", "#8aa4bd", "#b83a3a"];
+  let offset = 0;
+  const stops = topClients.map((client, index) => {
+    const start = offset;
+    const size = total > 0 ? (client.amount / total) * 100 : 0;
+    offset += size;
+    return `${colors[index % colors.length]} ${start}% ${offset}%`;
+  });
+
+  return (
+    <section className="section-card payment-donut-card">
+      <header className="section-card__header">
+        <div>
+          <h2>Recebimentos por cliente</h2>
+          <p>Concentração dos principais clientes no forecast.</p>
+        </div>
+      </header>
+      <div className="payment-donut-layout">
+        <div className="payment-donut" style={{ background: total > 0 ? `conic-gradient(${stops.join(", ")})` : "#edf3f8" }}>
+          <div>
+            <strong>{formatCurrency(total)}</strong>
+            <span>a receber</span>
+          </div>
+        </div>
+        <div className="payment-donut-legend">
+          {topClients.map((client, index) => (
+            <article key={client.name}>
+              <i style={{ background: colors[index % colors.length] }} />
+              <div>
+                <strong>{client.name}</strong>
+                <span>{formatCurrency(client.amount)} - {formatNumber(total > 0 ? (client.amount / total) * 100 : 0)}%</span>
+              </div>
+            </article>
+          ))}
+          {!topClients.length ? <div className="empty-state">Nenhum cliente no horizonte selecionado.</div> : null}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function FutureUpcomingReceivables({ rows }) {
+  const upcoming = [...rows]
+    .filter((row) => Number(row.valorAberto ?? 0) > 0)
+    .sort((left, right) =>
+      new Date(left.dataVencimento || "2999-12-31") - new Date(right.dataVencimento || "2999-12-31")
+      || Number(right.valorAberto ?? 0) - Number(left.valorAberto ?? 0),
+    )
+    .slice(0, 5);
+
+  return (
+    <section className="section-card future-upcoming-card">
+      <header className="section-card__header">
+        <div>
+          <h2>Próximos recebimentos</h2>
+          <p>Top 5 entradas previstas para acompanhamento.</p>
+        </div>
+      </header>
+      <div className="future-upcoming-list future-upcoming-list--receivable">
+        {upcoming.map((row) => (
+          <article key={`${row.empresa}-${row.duplicata}-${row.parcela}-${row.centroCodigo}`}>
+            <time>{formatDate(row.dataVencimento)}</time>
+            <div>
+              <strong>{row.pessoaNome || row.pessoaFantasia || row.pessoaRazao || row.documento || row.duplicata || "-"}</strong>
+              <span>{[row.documento || row.duplicata || "-", row.classificacaoNome || "Sem classificação"].filter(Boolean).join(" - ")}</span>
+            </div>
+            <strong>{formatCurrency(row.valorAberto)}</strong>
+          </article>
+        ))}
+        {!upcoming.length ? <div className="empty-state">Nenhum recebimento futuro no horizonte selecionado.</div> : null}
+      </div>
+    </section>
+  );
+}
+
+function FutureReceivablesDashboard({ data, payableData, horizon, onHorizonChange }) {
+  return (
+    <>
+      <FutureHorizonSelector value={horizon} onChange={onHorizonChange} />
+      <FutureReceivablesKpiGrid summary={data.summary} rows={data.rows} monthly={data.monthly} />
+      <FutureForecastChart
+        monthly={data.monthly}
+        title="Forecast mensal de recebimentos"
+        subtitle="Valores previstos a receber, média mensal e variação entre meses."
+        emptyText="Nenhum recebimento futuro encontrado para o horizonte selecionado."
+      />
+      <div className="future-dashboard-grid">
+        <FutureCashFlowChart receivableMonthly={data.monthly} payableMonthly={payableData.monthly || []} />
+        <FutureClientDonut rows={data.rows} />
+      </div>
+      <div className="future-dashboard-grid future-dashboard-grid--secondary">
+        <FutureDueHeatmap rows={data.rows} monthly={data.monthly} />
+        <FutureUpcomingReceivables rows={data.rows} />
+      </div>
+    </>
+  );
+}
+
+function ReceivablesDashboard({ data }) {
+  return (
+    <>
+      <div className="receivable-dashboard-main">
+        <FutureForecastChart
+          monthly={data.monthly}
+          title="Forecast de recebimentos"
+          subtitle="Recebimentos por mês, média e variação percentual."
+          emptyText="Nenhum recebimento encontrado para os filtros selecionados."
+        />
+        <FutureClientDonut rows={data.rows} />
+      </div>
+      <div className="receivable-dashboard-secondary">
+        <TopReceivablesCompact centers={data.centers} />
+        <FutureDueHeatmap rows={data.rows} monthly={data.monthly} />
+      </div>
+    </>
+  );
+}
+
+function TopReceivablesCompact({ centers }) {
+  const topCenters = getSortedFinancialCenters(centers).slice(0, 8);
+  const maxValue = Math.max(...topCenters.map((center) => center.totalAmount), 1);
+
+  return (
+    <section className="section-card top-receivables-card">
+      <header className="section-card__header">
+        <div>
+          <h2>Top recebimentos</h2>
+          <p>Centros com maior valor no período.</p>
+        </div>
+      </header>
+      <div className="top-receivables-list">
+        {topCenters.map((center) => (
+          <article key={center.codigo}>
+            <div>
+              <strong>{center.plate || center.centerName}</strong>
+              <span>{formatNumber(center.entriesCount)} lançamentos</span>
+            </div>
+            <div className="top-receivables-list__bar">
+              <i style={{ width: `${Math.min((center.totalAmount / maxValue) * 100, 100)}%` }} />
+            </div>
+            <strong>{formatCurrency(center.totalAmount)}</strong>
+          </article>
+        ))}
+        {!topCenters.length ? <div className="empty-state">Nenhum recebimento encontrado no período.</div> : null}
+      </div>
+    </section>
+  );
+}
+
 function CostCenterRanking({ centers }) {
   const sortedCenters = getSortedFinancialCenters(centers);
   const maxReference = Math.max(
@@ -2053,6 +3275,7 @@ function CostCenterRanking({ centers }) {
     critical: "Crítico",
     warning: "Atenção",
     normal: "Normal",
+    paid: "Pago",
   };
 
   return (
@@ -2065,7 +3288,7 @@ function CostCenterRanking({ centers }) {
       </header>
       <div className="cost-center-ranking">
         {sortedCenters.map((center) => (
-          <article className={`cost-center-row cost-center-row--${center.riskLevel}`} key={center.codigo}>
+          <article className={`cost-center-row cost-center-row--compact cost-center-row--${center.riskLevel}`} key={center.codigo}>
             <div className="cost-center-row__vehicle" aria-hidden="true">VEI</div>
             <div className="cost-center-row__main">
               <strong>{center.centerName}</strong>
@@ -2086,12 +3309,65 @@ function CostCenterRanking({ centers }) {
               <span>Vencido</span>
               <strong>{formatCurrency(center.overdueAmount)}</strong>
             </div>
+            <div>
+              <span>Pago</span>
+              <strong>{formatCurrency(center.paidAmount)}</strong>
+            </div>
             <div className={`risk-badge risk-badge--${center.riskLevel}`}>
               {riskLabels[center.riskLevel]}
             </div>
           </article>
         ))}
         {!sortedCenters.length ? <div className="empty-state">Nenhum centro de custo encontrado.</div> : null}
+      </div>
+    </section>
+  );
+}
+
+function FinancialClassificationRanking({ classifications }) {
+  const sortedClassifications = getSortedFinancialClassifications(classifications);
+
+  return (
+    <section className="section-card financial-ranking-panel">
+      <header className="section-card__header">
+        <div>
+          <h2>Ranking por classificação</h2>
+          <p>Ordenado por maior aberto, vencido e impacto total.</p>
+        </div>
+      </header>
+      <div className="cost-center-ranking">
+        {sortedClassifications.map((classification) => (
+          <article className="classification-row" key={classification.classificationCode || classification.classificationName}>
+            <div className="cost-center-row__vehicle" aria-hidden="true">CF</div>
+            <div className="cost-center-row__main">
+              <strong>{classification.classificationName}</strong>
+              <span>
+                {[
+                  classification.classificationCode ? `Cód. ${classification.classificationCode}` : "",
+                  classification.classificationNature,
+                  `${formatNumber(classification.entriesCount)} lançamentos`,
+                ].filter(Boolean).join(" - ")}
+              </span>
+            </div>
+            <div>
+              <span>Total</span>
+              <strong>{formatCurrency(classification.totalAmount)}</strong>
+            </div>
+            <div>
+              <span>Aberto</span>
+              <strong>{formatCurrency(classification.openAmount)}</strong>
+            </div>
+            <div>
+              <span>Vencido</span>
+              <strong>{formatCurrency(classification.overdueAmount)}</strong>
+            </div>
+            <div>
+              <span>Pago</span>
+              <strong>{formatCurrency(classification.paidAmount)}</strong>
+            </div>
+          </article>
+        ))}
+        {!sortedClassifications.length ? <div className="empty-state">Nenhuma classificação financeira encontrada.</div> : null}
       </div>
     </section>
   );
@@ -2121,88 +3397,157 @@ function TopOverdueList({ centers }) {
             <strong>{formatCurrency(center.overdueAmount)}</strong>
           </article>
         ))}
-        {!overdueCenters.length ? <div className="empty-state">Sem pendências vencidas no filtro.</div> : null}
+        {!overdueCenters.length ? <div className="empty-state">Nenhuma pendência vencida no período.</div> : null}
       </div>
     </section>
   );
 }
 
-function FinancialEntriesTable({ rows, partyLabel }) {
+function FinancialEntriesTable({ rows, partyLabel, collapsedByDefault = false }) {
+  const pageSize = 25;
+  const [page, setPage] = useState(1);
+  const [collapsed, setCollapsed] = useState(collapsedByDefault);
+  const totalPages = Math.max(Math.ceil(rows.length / pageSize), 1);
+  const safePage = Math.min(page, totalPages);
+  const paginatedRows = rows.slice((safePage - 1) * pageSize, safePage * pageSize);
+
+  useEffect(() => {
+    setPage(1);
+  }, [rows]);
+
+  useEffect(() => {
+    setCollapsed(collapsedByDefault);
+  }, [collapsedByDefault]);
+
   return (
-    <section className="section-card financial-entries-panel">
+    <section className={`section-card financial-entries-panel ${collapsed ? "is-collapsed" : ""}`}>
       <header className="section-card__header">
         <div>
           <h2>Lançamentos</h2>
           <p>Detalhe por vencimento, documento e centro de custo.</p>
         </div>
+        <button type="button" className="financial-entries-toggle" onClick={() => setCollapsed((current) => !current)}>
+          {collapsed ? `Ver lançamentos (${formatNumber(rows.length)} registros)` : "Ocultar lançamentos"}
+        </button>
       </header>
-      <div className="table-wrapper">
-        <table className="client-ranking-table financial-table">
-          <thead>
-            <tr>
-              <th>Vencimento</th>
-              <th>{partyLabel}</th>
-              <th>Documento / duplicata</th>
-              <th>Centro de custo</th>
-              <th>Status</th>
-              <th>Valor</th>
-              <th>Valor em aberto</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row) => {
-              const status = getFinancialStatus(row);
-              return (
-                <tr className={status === "vencido" ? "is-overdue" : ""} key={`${row.empresa}-${row.serie}-${row.duplicata}-${row.parcela}-${row.centroCodigo}`}>
-                  <td>
-                    <strong>{formatDate(row.dataVencimento)}</strong>
-                    <span>Emissão {formatDate(row.dataEmissao)}</span>
-                  </td>
-                  <td>
-                    <strong>{row.pessoaNome || row.pessoaFantasia || row.pessoaRazao || row.pessoa || "-"}</strong>
-                    <span>
-                      {[row.pessoa ? `Cód. ${row.pessoa}` : "", row.pessoaDocumento || row.documento || ""]
-                        .filter(Boolean)
-                        .join(" - ") || row.observacao || "-"}
-                    </span>
-                  </td>
-                  <td>
-                    <strong>{row.documento || row.duplicata || "-"}</strong>
-                    <span>Dup. {row.duplicata || "-"} / Parcela {row.parcela || "-"}</span>
-                  </td>
-                  <td>
-                    <strong>{getCenterPlate({ nome: row.centroNome }) || row.centroCodigo || "-"}</strong>
-                    <span>{row.centroNome || "-"}</span>
-                  </td>
-                  <td>
-                    <span className={`financial-status-badge financial-status-badge--${status}`}>
-                      {getStatusLabelFromEntry(row)}
-                    </span>
-                  </td>
-                  <td>{formatCurrency(row.valorDocumento)}</td>
-                  <td>{formatCurrency(row.valorAberto)}</td>
+      {!collapsed ? (
+        <>
+          <div className="financial-table-summary">
+            <strong>{formatNumber(rows.length)}</strong>
+            <span>registros</span>
+          </div>
+          <div className="table-wrapper">
+            <table className="client-ranking-table financial-table">
+              <thead>
+                <tr>
+                  <th>Vencimento</th>
+                  <th>{partyLabel}</th>
+                  <th>Documento / duplicata</th>
+                  <th>Parcela</th>
+                  <th>Centro de custo</th>
+                  <th>Classificação</th>
+                  <th>Status</th>
+                  <th>Valor</th>
+                  <th>Aberto</th>
+                  <th>Pago</th>
+                  <th>Juros</th>
+                  <th>Desconto</th>
                 </tr>
-              );
-            })}
-          </tbody>
-        </table>
-        {!rows.length ? <div className="empty-state">Nenhum lançamento encontrado para o filtro.</div> : null}
-      </div>
+              </thead>
+              <tbody>
+                {paginatedRows.map((row) => {
+                  const status = getFinancialStatus(row);
+                  return (
+                    <tr className={isOverdue(row) ? "is-overdue" : ""} key={`${row.empresa}-${row.serie}-${row.duplicata}-${row.parcela}-${row.centroCodigo}`}>
+                      <td>
+                        <strong>{formatDate(row.dataVencimento)}</strong>
+                        <span>Emissão {formatDate(row.dataEmissao)}</span>
+                      </td>
+                      <td>
+                        <strong>{row.pessoaNome || row.pessoaFantasia || row.pessoaRazao || row.pessoa || "-"}</strong>
+                        <span>
+                          {[row.pessoa ? `Cód. ${row.pessoa}` : "", row.pessoaDocumento || row.documento || ""]
+                            .filter(Boolean)
+                            .join(" - ") || row.observacao || "-"}
+                        </span>
+                      </td>
+                      <td>
+                        <strong>{row.documento || row.duplicata || "-"}</strong>
+                        <span>Dup. {row.duplicata || "-"} / Parcela {row.parcela || "-"}</span>
+                      </td>
+                      <td>{row.parcela || "-"}</td>
+                      <td>
+                        <strong>{getCenterPlate({ nome: row.centroNome }) || row.centroCodigo || "-"}</strong>
+                        <span>{row.centroNome || "-"}</span>
+                      </td>
+                      <td>
+                        <strong>{row.classificacaoNome || "Sem classificação"}</strong>
+                        <span>{row.classificacaoMascara || row.classificacaoNatureza || "-"}</span>
+                      </td>
+                      <td>
+                        <span className={`financial-status-badge financial-status-badge--${status}`}>
+                          {getStatusLabelFromEntry(row)}
+                        </span>
+                      </td>
+                      <td>{formatCurrency(row.valorDocumento)}</td>
+                      <td>{formatCurrency(row.valorAberto)}</td>
+                      <td>{formatCurrency(row.valorPago)}</td>
+                      <td>{formatCurrency(row.valorJuros)}</td>
+                      <td>{formatCurrency(row.valorDesconto)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            {!rows.length ? <div className="empty-state">Nenhum lançamento encontrado para o filtro.</div> : null}
+          </div>
+          {rows.length > pageSize ? (
+            <div className="financial-table-pagination">
+              <span>
+                Página {formatNumber(safePage)} de {formatNumber(totalPages)}
+              </span>
+              <div>
+                <button type="button" onClick={() => setPage((current) => Math.max(current - 1, 1))} disabled={safePage === 1}>
+                  Anterior
+                </button>
+                <button type="button" onClick={() => setPage((current) => Math.min(current + 1, totalPages))} disabled={safePage === totalPages}>
+                  Próxima
+                </button>
+              </div>
+            </div>
+          ) : null}
+        </>
+      ) : null}
     </section>
   );
 }
 
-function FinancialAnalysisScreen() {
+function FinancialAnalysisScreen({ initialType = "receivable" }) {
   const today = new Date().toISOString().slice(0, 10);
   const currentMonthStart = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}-01`;
-  const [financialType, setFinancialType] = useState("receivable");
-  const [filters, setFilters] = useState({
-    startDate: currentMonthStart,
-    endDate: today,
-    costCenter: "",
-    search: "",
-    status: "",
-  });
+  const futureEndDate = toInputDate(addMonths(new Date(), 12));
+  const [futureHorizon, setFutureHorizon] = useState(initialType === "futurePayable" || initialType === "futureReceivable" ? "12m" : "12m");
+  const initialFilters = initialType === "futurePayable" || initialType === "futureReceivable"
+    ? {
+      startDate: today,
+      endDate: futureEndDate,
+      costCenter: "",
+      classification: "",
+      customer: "",
+      search: "",
+      status: "aberto",
+    }
+    : {
+      startDate: currentMonthStart,
+      endDate: today,
+      costCenter: "",
+      classification: "",
+      customer: "",
+      search: "",
+      status: "",
+    };
+  const [financialType, setFinancialType] = useState(initialType);
+  const [filters, setFilters] = useState(initialFilters);
   const [data, setData] = useState({
     summary: {
       totalLancamentos: 0,
@@ -2213,30 +3558,59 @@ function FinancialAnalysisScreen() {
       lancamentosVencidos: 0,
     },
     centers: [],
+    classifications: [],
+    classificationOptions: [],
+    monthly: [],
     rows: [],
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [cashFlowData, setCashFlowData] = useState({ monthly: [] });
 
   async function loadFinancialAnalysis(type = financialType, currentFilters = filters) {
     setLoading(true);
     setError("");
 
     try {
-      const params = new URLSearchParams({ type });
-      for (const [key, value] of Object.entries(currentFilters)) {
+      const apiType = type === "futurePayable" ? "payable" : type === "futureReceivable" ? "receivable" : type;
+      const requestFilters = type === "futurePayable" || type === "futureReceivable"
+        ? { ...currentFilters, status: "aberto" }
+        : currentFilters;
+      if (type === "futureReceivable" && requestFilters.customer) {
+        requestFilters.search = requestFilters.customer;
+      }
+      delete requestFilters.customer;
+      const params = new URLSearchParams({ type: apiType });
+      for (const [key, value] of Object.entries(requestFilters)) {
         if (String(value ?? "").trim()) {
           params.set(key, value);
         }
       }
-      params.set("limit", "100");
+      params.set("limit", "500");
 
       const response = await fetch(`${API_URL}/client-analysis/financial?${params.toString()}`);
       if (!response.ok) {
         throw new Error("Não foi possível carregar a análise financeira.");
       }
 
-      setData(await response.json());
+      const nextData = await response.json();
+      setData(nextData);
+
+      if (type === "futureReceivable") {
+        const payableFilters = { ...currentFilters, status: "aberto" };
+        delete payableFilters.customer;
+        const payableParams = new URLSearchParams({ type: "payable" });
+        for (const [key, value] of Object.entries(payableFilters)) {
+          if (String(value ?? "").trim()) {
+            payableParams.set(key, value);
+          }
+        }
+        payableParams.set("limit", "500");
+        const payableResponse = await fetch(`${API_URL}/client-analysis/financial?${payableParams.toString()}`);
+        if (payableResponse.ok) {
+          setCashFlowData(await payableResponse.json());
+        }
+      }
     } catch (loadError) {
       setError(loadError.message);
     } finally {
@@ -2260,25 +3634,131 @@ function FinancialAnalysisScreen() {
     loadFinancialAnalysis(financialType, filters);
   }
 
+  function changeFinancialType(type) {
+    setFinancialType(type);
+    if (type === "futurePayable" || type === "futureReceivable") {
+      setFilters((current) => ({
+        ...current,
+        startDate: today,
+        endDate: futureEndDate,
+        status: "aberto",
+      }));
+      setFutureHorizon("12m");
+      window.history.replaceState(null, "", type === "futurePayable" ? "/financeiro/despesas-futuras" : "/financeiro/recebimentos-futuros");
+      return;
+    }
+
+    setFilters((current) => ({
+      ...current,
+      startDate: current.startDate || currentMonthStart,
+      endDate: current.endDate || today,
+      status: "",
+    }));
+    window.history.replaceState(null, "", type === "payable" ? "/financeiro/pagamentos" : "/financeiro/recebimentos");
+  }
+
+  function changeFutureHorizon(horizon) {
+    const baseDate = new Date();
+    const endByHorizon = {
+      "30d": toInputDate(addDays(baseDate, 30)),
+      "90d": toInputDate(addDays(baseDate, 90)),
+      "12m": toInputDate(addMonths(baseDate, 12)),
+      "24m": toInputDate(addMonths(baseDate, 24)),
+    };
+    const nextFilters = {
+      ...filters,
+      startDate: today,
+      endDate: endByHorizon[horizon] || futureEndDate,
+      status: "aberto",
+    };
+
+    setFutureHorizon(horizon);
+    setFilters(nextFilters);
+    loadFinancialAnalysis(financialType, nextFilters);
+  }
+
   const isReceivable = financialType === "receivable";
+  const isPayable = financialType === "payable";
+  const isFuturePayable = financialType === "futurePayable";
+  const isFutureReceivable = financialType === "futureReceivable";
   const partyLabel = isReceivable ? "Cliente" : "Fornecedor";
 
   return (
     <main className="content quote-content client-analysis-screen financial-analysis-screen">
-      <FinancialPageHeader center={filters.costCenter} />
-      <FinancialTabs value={financialType} onChange={setFinancialType} />
+      <FinancialPageHeader center={filters.costCenter} type={financialType} />
+      <FinancialTabs value={financialType} onChange={changeFinancialType} />
 
       {error ? <div className="feedback-card feedback-card--error">{error}</div> : null}
 
-      <FinancialFilters filters={filters} loading={loading} onChange={updateFilter} onSubmit={applyFilters} />
-      <FinancialKpiGrid summary={data.summary} type={financialType} />
+      <FinancialFilters
+        filters={filters}
+        loading={loading}
+        onChange={updateFilter}
+        onSubmit={applyFilters}
+        lockStatus={isFuturePayable || isFutureReceivable}
+        classificationOptions={data.classificationOptions}
+        showCustomer={isReceivable || isFutureReceivable}
+      />
+      {isFutureReceivable ? (
+        <FutureReceivablesDashboard data={data} payableData={cashFlowData} horizon={futureHorizon} onHorizonChange={changeFutureHorizon} />
+      ) : isFuturePayable ? (
+        <FutureExpensesDashboard data={data} horizon={futureHorizon} onHorizonChange={changeFutureHorizon} />
+      ) : (
+        <FinancialKpiGrid summary={data.summary} type={financialType} />
+      )}
 
-      <div className="financial-analysis-grid">
-        <CostCenterRanking centers={data.centers} />
-        <TopOverdueList centers={data.centers} />
-      </div>
+      {isReceivable ? <ReceivablesDashboard data={data} /> : null}
 
-      <FinancialEntriesTable rows={data.rows} partyLabel={partyLabel} />
+      {isFuturePayable || isFutureReceivable ? null : isPayable ? (
+        <>
+          <div className="payments-chart-grid">
+            <MonthlyPaymentsChart monthly={data.monthly} />
+            <FinancialClassificationDonut classifications={data.classifications} />
+          </div>
+          <div className="payments-chart-grid payments-chart-grid--compact">
+            <PaymentsByCostCenterChart
+              centers={data.centers}
+              title="Top centros de custo"
+              subtitle="Centros com maior valor em aberto no período."
+            />
+            <TopOverdueList centers={data.centers} />
+          </div>
+          <PaymentHealthCard summary={data.summary} />
+        </>
+      ) : !isReceivable ? (
+        <>
+          <div className="payments-chart-grid">
+            <MonthlyPaymentsChart
+              monthly={data.monthly}
+              title={isFuturePayable ? "Despesas futuras por mês" : "Pagamentos por mês"}
+              subtitle={isFuturePayable ? "Previsão mensal dos compromissos em aberto." : "Comparativo mensal entre total, pago, aberto e vencido."}
+              series={isFuturePayable ? [{ key: "valorAberto", label: "Em aberto", className: "open" }] : undefined}
+            />
+            <PaymentsByCostCenterChart
+              centers={data.centers}
+              title={isFuturePayable ? "Despesas futuras por centro" : "Pagamentos por centro de custo"}
+              subtitle={isFuturePayable ? "Top 10 centros por valor em aberto." : "Top 10 centros por valor em aberto."}
+            />
+          </div>
+          <div className="payments-chart-grid payments-chart-grid--classification">
+            <FinancialClassificationChart classifications={data.classifications} />
+            <TopOverdueList centers={data.centers} />
+          </div>
+        </>
+      ) : null}
+
+      {!isReceivable && !isPayable && !isFuturePayable && !isFutureReceivable ? (
+        <div className="financial-analysis-grid">
+          <CostCenterRanking centers={data.centers} />
+          {!isReceivable ? (
+            <FinancialClassificationRanking classifications={data.classifications} />
+          ) : (
+            <TopOverdueList centers={data.centers} />
+          )}
+        </div>
+      ) : null}
+
+      {!isFuturePayable && !isFutureReceivable ? <FinancialEntriesTable rows={data.rows} partyLabel={partyLabel} collapsedByDefault={isPayable || isReceivable} /> : null}
     </main>
   );
 }
@@ -2353,15 +3833,27 @@ function ClientAnalysisScreen() {
     ...data.monthly.map((month) => Number(month.faturamentoTotal ?? 0)),
     1,
   );
+  const maxClientRevenue = Math.max(...data.ranking.map((client) => Number(client.faturamentoTotal ?? 0)), 1);
+  const maxMonthlyCtes = Math.max(...data.monthly.map((month) => Number(month.quantidadeCtes ?? 0)), 1);
+  const topClients = data.ranking.slice(0, 8);
+  const topClientsTotal = topClients.reduce((sum, client) => sum + Number(client.faturamentoTotal ?? 0), 0);
+  const clientColors = ["#1f6f54", "#2e78b4", "#f28c2b", "#61738e", "#8aa4bd", "#b83a3a", "#6f8f54", "#465b78"];
+  let clientOffset = 0;
+  const clientDonutStops = topClients.map((client, index) => {
+    const start = clientOffset;
+    const size = topClientsTotal > 0 ? (Number(client.faturamentoTotal ?? 0) / topClientsTotal) * 100 : 0;
+    clientOffset += size;
+    return `${clientColors[index % clientColors.length]} ${start}% ${clientOffset}%`;
+  });
 
   return (
     <>
-      <section className="quote-hero">
+      <section className="quote-hero client-revenue-hero">
         <div>
           <span className="hero__eyebrow">Faturamento</span>
-          <h2>CT-e por cliente</h2>
+          <h2>Análise de clientes</h2>
           <p>
-            Acompanhe a representatividade de cada cliente, veja quem mais fatura e filtre por período.
+            Veja quanto cada cliente fatura, quantos CT-es gera e a concentração da carteira no período.
           </p>
         </div>
         <div className="quote-hero__rate">
@@ -2410,6 +3902,11 @@ function ClientAnalysisScreen() {
           <strong className="stat-card__value">{formatCurrency(data.summary.faturamentoTotal)}</strong>
           <span className="stat-card__helper">{formatNumber(data.summary.quantidadeCtes)} CT-es no período</span>
         </div>
+        <div className="stat-card stat-card--success">
+          <span className="stat-card__title">Quantidade de CT-es</span>
+          <strong className="stat-card__value">{formatNumber(data.summary.quantidadeCtes)}</strong>
+          <span className="stat-card__helper">Documentos emitidos no filtro</span>
+        </div>
         <div className="stat-card">
           <span className="stat-card__title">Clientes com faturamento</span>
           <strong className="stat-card__value">{formatNumber(data.summary.totalClientes)}</strong>
@@ -2426,6 +3923,91 @@ function ClientAnalysisScreen() {
           <span className="stat-card__helper">
             {topClient ? `${formatNumber(topClient.representatividadePercentual)}% do total` : "Sem dados"}
           </span>
+        </div>
+      </section>
+
+      <div className="client-revenue-dashboard-grid">
+        <section className="section-card client-revenue-bars-card">
+          <header className="section-card__header">
+            <div>
+              <h2>Top clientes por faturamento</h2>
+              <p>Valor faturado e quantidade de CT-es por cliente.</p>
+            </div>
+          </header>
+          <div className="client-revenue-bars">
+            {topClients.map((client) => (
+              <article key={`${client.empresa}-${client.codigo}`}>
+                <div>
+                  <strong>{client.fantasia || client.nome}</strong>
+                  <span>{formatNumber(client.quantidadeCtes)} CT-es</span>
+                </div>
+                <div className="client-revenue-bars__track">
+                  <i style={{ width: `${Math.min((Number(client.faturamentoTotal ?? 0) / maxClientRevenue) * 100, 100)}%` }} />
+                </div>
+                <strong>{formatCurrency(client.faturamentoTotal)}</strong>
+              </article>
+            ))}
+            {!topClients.length ? <div className="empty-state">Nenhum cliente encontrado no período.</div> : null}
+          </div>
+        </section>
+
+        <section className="section-card client-revenue-donut-card">
+          <header className="section-card__header">
+            <div>
+              <h2>Concentração da carteira</h2>
+              <p>Participação dos principais clientes no faturamento.</p>
+            </div>
+          </header>
+          <div className="payment-donut-layout">
+            <div
+              className="payment-donut"
+              style={{ background: topClientsTotal > 0 ? `conic-gradient(${clientDonutStops.join(", ")})` : "#edf3f8" }}
+            >
+              <div>
+                <strong>{formatCurrency(topClientsTotal)}</strong>
+                <span>top clientes</span>
+              </div>
+            </div>
+            <div className="payment-donut-legend">
+              {topClients.slice(0, 6).map((client, index) => (
+                <article key={`${client.empresa}-${client.codigo}`}>
+                  <i style={{ background: clientColors[index % clientColors.length] }} />
+                  <div>
+                    <strong>{client.fantasia || client.nome}</strong>
+                    <span>{formatNumber(client.representatividadePercentual)}% - {formatCurrency(client.faturamentoTotal)}</span>
+                  </div>
+                </article>
+              ))}
+              {!topClients.length ? <div className="empty-state">Sem faturamento para compor a carteira.</div> : null}
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <section className="section-card client-revenue-monthly-card">
+        <header className="section-card__header">
+          <div>
+            <h2>Evolução mensal por faturamento e CT-es</h2>
+            <p>Compare valor faturado e volume operacional mês a mês.</p>
+          </div>
+        </header>
+        <div className="client-revenue-monthly-chart">
+          {data.monthly.map((month) => (
+            <article key={month.referencia}>
+              <div className="client-revenue-monthly-chart__bars">
+                <i className="is-revenue" style={{ height: `${Math.max((Number(month.faturamentoTotal ?? 0) / maxMonthlyValue) * 100, 2)}%` }} />
+                <i className="is-ctes" style={{ height: `${Math.max((Number(month.quantidadeCtes ?? 0) / maxMonthlyCtes) * 100, 2)}%` }} />
+              </div>
+              <strong>{month.referencia}</strong>
+              <span>{formatCurrency(month.faturamentoTotal)}</span>
+              <small>{formatNumber(month.quantidadeCtes)} CT-es</small>
+            </article>
+          ))}
+          {!data.monthly.length ? <div className="empty-state">Sem evolução mensal para mostrar.</div> : null}
+        </div>
+        <div className="chart-legend payments-chart-legend">
+          <span><i className="legend-dot legend-dot--paid" />Faturamento</span>
+          <span><i className="legend-dot legend-dot--info" />CT-es</span>
         </div>
       </section>
 
