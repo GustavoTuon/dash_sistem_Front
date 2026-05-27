@@ -919,108 +919,129 @@ export function App() {
   }
 
   return (
-    <div className="app-shell freight-app">
-      <header className="topbar">
-        <div className="topbar__inner">
-          <div className="brand-block topbar__brand">
-            <div className="brand-lockup">
-              <div className="brand-mark" aria-hidden="true">
-                <span className="brand-mark__rb brand-mark__rb--dark">R</span>
-                <span className="brand-mark__rb brand-mark__rb--light">B</span>
-              </div>
-              <div className="brand-copy">
-                <span className="brand-block__eyebrow">Transportes</span>
-                <h1>Rodobach</h1>
-              </div>
-            </div>
-          </div>
-
-          <nav className="quote-nav" aria-label="Módulo atual">
-            <div className="module-switch">
-              <button
-                type="button"
-                className={activeModule === "calculator" ? "is-active" : ""}
-                onClick={() => setActiveModule("calculator")}
-              >
-                Cálculo
-              </button>
-              <button
-                type="button"
-                className={activeModule === "registry" ? "is-active" : ""}
-                onClick={() => setActiveModule("registry")}
-              >
-                Cadastro
-              </button>
-              <button
-                type="button"
-                className={activeModule === "clients" ? "is-active" : ""}
-                onClick={() => setActiveModule("clients")}
-              >
-                Faturamento
-              </button>
-              <button
-                type="button"
-                className={activeModule === "financial" ? "is-active" : ""}
-                onClick={() => setActiveModule("financial")}
-              >
-                Financeiro
-              </button>
-              <button
-                type="button"
-                className={activeModule === "ibrap" ? "is-active" : ""}
-                onClick={() => {
-                  setActiveModule("ibrap");
-                  window.history.replaceState(null, "", "/ibrap");
-                }}
-              >
-                IBRAP
-              </button>
-              <button
-                type="button"
-                className={activeModule === "dailyAllowance" ? "is-active" : ""}
-                onClick={() => setActiveModule("dailyAllowance")}
-              >
-                Diárias
-              </button>
-            </div>
-            <span>
-              {activeModule === "registry"
-                ? "Consulta, cadastro e impressão de fretes negociados"
-                : activeModule === "clients"
-                  ? "Controle de viagens por motorista e veículo"
-                : activeModule === "financial"
-                  ? "Recebimentos e pagamentos por centro de custo"
-                  : activeModule === "ibrap"
-                    ? "Consulta e leitura da chave da nota fiscal"
-                  : activeModule === "dailyAllowance"
-                    ? "Cálculo de diárias e parâmetros do motorista"
-                    : "Base ANTT por tipo de veículo e número de eixos"}
-            </span>
-          </nav>
-
-          <div className="topbar__summary">
-            {activeModule === "clients" || activeModule === "dailyAllowance" || activeModule === "financial" || activeModule === "ibrap" ? (
-              <>
-                <span>{activeModule === "dailyAllowance" ? "Cálculo" : "Análise"}</span>
-                <strong>
-                  {activeModule === "clients"
-                    ? "Faturamento"
-                    : activeModule === "financial"
-                      ? "Financeiro"
-                      : activeModule === "ibrap"
-                        ? "IBRAP"
-                    : "Diárias"}
-                </strong>
-              </>
-            ) : (
-              <>
-                <span>{selectedRate?.vehicleType ?? "Tabela"}</span>
-                <strong>{form.axles} eixos</strong>
-              </>
-            )}
+    <div className="app">
+      {/* Sidebar */}
+      <aside className="sidebar">
+        <div className="sidebar__brand">
+          <div className="sidebar__logo">RB</div>
+          <div>
+            <div className="sidebar__brand-name">Rodobach</div>
+            <div className="sidebar__brand-sub">Transportes</div>
           </div>
         </div>
-      </header>
+
+        <div className="sidebar__section-label">Geral</div>
+        <button
+          type="button"
+          className={"nav-item" + (activeModule === "calculator" ? " nav-item--active" : "")}
+          onClick={() => setActiveModule("calculator")}
+        >
+          <svg className="nav-item__icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+            <rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/>
+            <rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/>
+          </svg>
+          Cálculo
+        </button>
+
+        <div className="sidebar__section-label">Operação</div>
+        <button
+          type="button"
+          className={"nav-item" + (activeModule === "registry" ? " nav-item--active" : "")}
+          onClick={() => setActiveModule("registry")}
+        >
+          <svg className="nav-item__icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+            <path d="M3 4h10M3 8h10M3 12h6"/>
+          </svg>
+          Cadastro
+        </button>
+        <button
+          type="button"
+          className={"nav-item" + (activeModule === "clients" ? " nav-item--active" : "")}
+          onClick={() => setActiveModule("clients")}
+        >
+          <svg className="nav-item__icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+            <path d="M2 13v-2a3 3 0 0 1 3-3h6a3 3 0 0 1 3 3v2"/><circle cx="8" cy="5" r="3"/>
+          </svg>
+          Faturamento
+        </button>
+        <button
+          type="button"
+          className={"nav-item" + (activeModule === "financial" ? " nav-item--active" : "")}
+          onClick={() => {
+            setActiveModule("financial");
+            window.history.replaceState(null, "", "/financeiro/recebimentos");
+          }}
+        >
+          <svg className="nav-item__icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+            <rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M5 8h6M5 10.5h4"/>
+          </svg>
+          Financeiro
+        </button>
+
+        <div className="sidebar__section-label">Ferramentas</div>
+        <button
+          type="button"
+          className={"nav-item" + (activeModule === "ibrap" ? " nav-item--active" : "")}
+          onClick={() => {
+            setActiveModule("ibrap");
+            window.history.replaceState(null, "", "/ibrap");
+          }}
+        >
+          <svg className="nav-item__icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+            <rect x="2" y="4" width="12" height="8" rx="1.5"/><path d="M5 7.5h1.5M8.5 7.5h1.5M11 7.5h.5M5 10h2M9 10h2"/>
+          </svg>
+          IBRAP
+        </button>
+        <button
+          type="button"
+          className={"nav-item" + (activeModule === "dailyAllowance" ? " nav-item--active" : "")}
+          onClick={() => setActiveModule("dailyAllowance")}
+        >
+          <svg className="nav-item__icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+            <circle cx="8" cy="8" r="6"/><path d="M8 5v3l2 1.5"/>
+          </svg>
+          Diárias
+        </button>
+
+        <div className="sidebar__footer">
+          <div className="sidebar__user">
+            <div className="sidebar__avatar">RB</div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div className="sidebar__user-name">Rodobach</div>
+              <div className="sidebar__user-role">Administrador</div>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      {/* Main area */}
+      <div className="main">
+        <div className="topbar">
+          <div className="topbar__breadcrumb">
+            <span>
+              {activeModule === "calculator" || activeModule === "registry" ? "Operação"
+                : activeModule === "clients" || activeModule === "financial" ? "Análise"
+                : "Ferramentas"}
+            </span>
+            <span className="topbar__breadcrumb-sep">›</span>
+            <strong>
+              {activeModule === "calculator" ? "Calculadora de frete"
+                : activeModule === "registry" ? "Cadastro de cotações"
+                : activeModule === "clients" ? "Faturamento"
+                : activeModule === "financial" ? "Financeiro"
+                : activeModule === "ibrap" ? "IBRAP — Chave NF-e"
+                : activeModule === "dailyAllowance" ? "Diárias do motorista"
+                : "Calculadora de frete"}
+            </strong>
+          </div>
+          <div className="topbar__spacer" />
+          <div className="topbar__search-wrap">
+            <svg className="topbar__search-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+              <circle cx="6.5" cy="6.5" r="4.5"/><path d="m10.5 10.5 3 3"/>
+            </svg>
+            <input className="topbar__search" placeholder="Buscar viagens, clientes, motoristas…" />
+          </div>
+        </div>
 
       {activeModule === "calculator" ? (
       <main className="content quote-content">
@@ -1440,6 +1461,7 @@ export function App() {
       ) : (
         <QuoteRegistryScreen />
       )}
+      </div>
     </div>
   );
 }
